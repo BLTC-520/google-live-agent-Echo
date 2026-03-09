@@ -14,7 +14,7 @@ app.use(express.json());
 app.use('/assets', express.static(path.join(__dirname, 'assets')));
 
 // --- Telegram Webhook ---
-app.use('/webhook', bot.webhookCallback('/webhook'));
+app.use(bot.webhookCallback('/webhook'));
 
 // --- Shared Styles & Layout ---
 function getBaseStyles() {
