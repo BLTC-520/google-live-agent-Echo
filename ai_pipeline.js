@@ -112,19 +112,29 @@ ${scrapedText}
     console.error('[AI Pipeline] Failed to parse Gemini response:', cleaned.substring(0, 300));
     return {
       lyrics: cleaned,
-      image_prompt: 'Abstract musical waveforms in neon cyan and purple on a dark background',
-      musical_dna: { bpm: '120', mood: 'Energetic', key: 'C Major' },
-      music_direction: 'Upbeat electronic, crisp drums, bright synths',
+      image_prompt: 'A digital hacker silhouette with glowing green code matrix background, security audit style',
+      musical_dna: { bpm: '92', mood: 'Serious', key: 'A Minor' },
+      music_direction: 'Grimy boom-bap hip hop, heavy bass, vinyl crackle, atmospheric pads',
     };
   }
 }
 
 function getFallbackGeminiResult() {
   return {
-    lyrics: 'The knowledge flows but words were lost in transit...',
-    image_prompt: 'Abstract musical waveforms in neon cyan and purple on a dark background',
-    musical_dna: { bpm: '120', mood: 'Energetic', key: 'C Major' },
-    music_direction: 'Upbeat electronic, crisp drums, bright synths',
+    lyrics: `Masterin' audits, for the digital youth.
+Smart contracts runnin', fortunes on the line,
+Immutable code, no re-dos, gotta make it shine.
+
+First, an audit's a deep dive, a code review,
+Findin' weaknesses, before a breach breaks through.
+'Cause 2022, wallets got drained, yo, that's a fact,
+Adversarial world, gotta be on the attack.
+
+Automated tools, they scan for the basic flaws,
+But human eyes, they catch the context, breakin' all the laws.`,
+    image_prompt: 'A digital hacker silhouette with glowing green code matrix background, security audit style',
+    musical_dna: { bpm: '92', mood: 'Serious', key: 'A Minor' },
+    music_direction: 'Grimy boom-bap hip hop, heavy bass, vinyl crackle, atmospheric pads',
   };
 }
 
