@@ -246,7 +246,7 @@ async function generateMusicVideo(coverBase64, lyrics, genre, chatId) {
     const payload = {
       instances: [{
         prompt: videoPrompt,
-        image: { bytesBase64Encoded: coverBase64 },
+        image: { bytesBase64Encoded: coverBase64, mimeType: 'image/png' },
       }],
       parameters: {
         aspectRatio: '16:9',
