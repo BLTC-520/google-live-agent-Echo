@@ -36,11 +36,20 @@ ${scrapedText}
 }`;
 
   const response = await genai.models.generateContent({
-    model: 'gemini-2.5-flash-preview-05-20',
+    model: 'gemini-2.5-flash',
     contents: prompt,
   });
 
-  const text = response.text.trim();
+  const rawText = response.text;
+  if (!rawText) {
+    console.error('[AI Pipeline] Gemini returned empty response');
+    return {
+      lyrics: 'The knowledge flows but words were lost in transit...',
+      image_prompt: 'Abstract musical waveforms in neon cyan and purple on a dark background',
+      musical_dna: { bpm: '120', mood: 'Energetic', key: 'C Major' },
+    };
+  }
+  const text = rawText.trim();
 
   // Try to parse the JSON — handle potential markdown fences
   let cleaned = text;

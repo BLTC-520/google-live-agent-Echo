@@ -68,9 +68,11 @@ bot.command('generate_digest', async (ctx) => {
     await updateSession(chatId, { status: 'processing' });
 
     // IMMEDIATE reply — crucial for Telegram timeout
+    const digestUrl = `${process.env.CLOUD_RUN_URL || 'http://localhost:8080'}/digest/${chatId}`;
     await ctx.reply(
       `🎧 I'm stepping into the booth. This will take about 2 minutes.\n\n` +
       `Mixing ${session.links.length} source(s) into a ${session.genre || 'custom'} track...\n\n` +
+      `🌐 Watch it cook:\n${digestUrl}\n\n` +
       `I'll ping you when the master track is ready!`
     );
 
@@ -146,10 +148,12 @@ bot.on('text', async (ctx) => {
     // Step 2: If no genre is set, treat this message as the genre
     if (!session.genre) {
       await updateSession(chatId, { genre: text });
+      const digestUrl = `${process.env.CLOUD_RUN_URL || 'http://localhost:8080'}/digest/${chatId}`;
       return ctx.reply(
         `🎵 Genre set to: "${text}"\n\n` +
         `You're all set! Now send me links to articles, YouTube videos, or tweets.\n` +
         `I'll queue them up for your personalized track.\n\n` +
+        `🌐 Your dashboard is live:\n${digestUrl}\n\n` +
         `When you're ready, type /generate_digest to drop the album! 🎧`
       );
     }
