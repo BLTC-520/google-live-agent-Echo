@@ -738,7 +738,7 @@ function renderResultPage(session, chatId) {
 
         ${hasAudio ? `
         <audio controls preload="metadata" id="audioPlayer">
-          <source src="${results.audio_url}" type="audio/wav">
+          <source src="${results.audio_url}" type="${results.audio_url.includes('.mp3') ? 'audio/mpeg' : 'audio/wav'}">
           Your browser does not support the audio element.
         </audio>
 

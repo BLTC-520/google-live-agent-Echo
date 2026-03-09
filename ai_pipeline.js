@@ -213,11 +213,30 @@ async function generateMusic(lyrics, genre, musicalDna, musicDirection, chatId) 
       return url;
     }
 
-    console.warn('[AI Pipeline] Lyria 3 returned no audio data.');
-    return '';
+    console.warn('[AI Pipeline] Lyria 3 returned no audio data, using fallback track.');
+    return await useFallbackTrack(chatId);
   } catch (err) {
     console.error('[AI Pipeline] Lyria 3 error:', err.message);
-    return '';
+    console.log('[AI Pipeline] Using fallback track (Immutable_Code.mp3)...');
+    return await useFallbackTrack(chatId);
+  }
+}
+
+/**
+ * Fallback: upload the bundled MP3 to GCS and return the URL.
+ * Used when Lyria 3 is unavailable (e.g., allowlist pending).
+ */
+async function useFallbackTrack(chatId) {
+  try {
+    const fallbackPath = path.join(__dirname, 'assets', 'Immutable_Code.mp3');
+    const buffer = require('fs').readFileSync(fallbackPath);
+    const fileName = `tracks/${chatId}_fallback_${Date.now()}.mp3`;
+    const url = await uploadToGCS(buffer, fileName, 'audio/mpeg');
+    console.log(`[AI Pipeline] Fallback track uploaded (${(buffer.length / 1024 / 1024).toFixed(1)}MB).`);
+    return url;
+  } catch (fallbackErr) {
+    console.error('[AI Pipeline] Fallback track upload failed:', fallbackErr.message);
+    return '/assets/Immutable_Code.mp3'; // Last resort: serve from Express static
   }
 }
 
