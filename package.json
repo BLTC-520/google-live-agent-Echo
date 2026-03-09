@@ -15,12 +15,14 @@
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.10.0",
+    "@google-cloud/storage": "^7.19.0",
     "@google-cloud/vertexai": "^1.9.0",
     "@google/genai": "^1.44.0",
     "axios": "^1.7.0",
     "cheerio": "^1.0.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
+    "google-auth-library": "^10.6.1",
     "telegraf": "^4.16.3",
     "youtube-transcript": "^1.2.1"
   },

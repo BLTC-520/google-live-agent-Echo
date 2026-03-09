@@ -571,6 +571,7 @@ function renderResultPage(session, chatId) {
   const results = session.generation_results || {};
   const dna = results.musical_dna || {};
   const hasAudio = results.audio_url && results.audio_url.length > 0;
+  const hasVideo = results.video_url && results.video_url.length > 0;
 
   // Process lyrics: split by newlines for display
   const lyricsLines = (results.lyrics || 'No lyrics generated.')
@@ -727,7 +728,13 @@ function renderResultPage(session, chatId) {
     <div class="result">
       <!-- Left: Album Art + Player -->
       <div class="album-panel glass">
+        ${hasVideo ? `
+        <video autoplay loop muted playsinline class="album-cover" poster="${results.image_url || '/assets/echo_logo.jpg'}">
+          <source src="${results.video_url}" type="video/mp4">
+        </video>
+        ` : `
         <img src="${results.image_url || '/assets/echo_logo.jpg'}" alt="Album Cover" class="album-cover" />
+        `}
 
         ${hasAudio ? `
         <audio controls preload="metadata" id="audioPlayer">
@@ -742,7 +749,7 @@ function renderResultPage(session, chatId) {
         ` : `
         <div class="controls">
           <div class="btn-secondary" style="flex: 1; justify-content: center; opacity: 0.5; cursor: default;">
-            🎵 Audio generation coming soon
+            🎵 Audio generation in progress...
           </div>
         </div>
         `}

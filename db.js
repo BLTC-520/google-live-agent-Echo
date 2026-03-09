@@ -23,6 +23,7 @@ const DEFAULT_SESSION = {
     lyrics: '',
     image_url: '',
     audio_url: '',
+    video_url: '',
     musical_dna: { bpm: '', mood: '', key: '' },
     image_prompt: '',
   },
