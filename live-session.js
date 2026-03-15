@@ -12,7 +12,7 @@
  *   5. Receive { serverContent: { modelTurn: { parts: [...] } } } back
  */
 const WebSocket = require('ws');
-const { updateSession } = require('./db');
+const { updateSession, getSession } = require('./db');
 const { runGenerationPipeline } = require('./ai_pipeline');
 
 // AI Studio v1alpha — required for native audio preview models
@@ -27,12 +27,18 @@ Your conversation goal is to collect three things from the user:
 2. Their preferred MUSIC GENRE (e.g., "Lo-fi Hip Hop", "Synthwave", "Jazz", "Pop")
 3. At least one URL — links to articles, YouTube videos, or tweets they've been reading
 
-Follow this natural conversation flow:
-- Start by warmly greeting the user and asking what they want to learn today
-- Once you have their goal, ask what music genre fits their mood
-- Once you have genre, ask them to share any links they've been reading
-- Confirm what you've collected and ask if they're ready to generate their track
-- When they say yes, call trigger_generation() with the collected data
+Follow this STRICT conversation flow — do NOT skip steps or call trigger_generation() early:
+- STEP 1: Warmly greet the user and ask what they want to learn today. Wait for their answer.
+- STEP 2: Once they give a goal, ask what music genre fits their mood. Wait for their answer.
+- STEP 3: Once they give a genre, ask them to share at least one URL. Wait for their answer.
+- STEP 4: Read back all three collected items (goal, genre, URL(s)) and explicitly ask "Ready to generate your track?"
+- STEP 5: ONLY call trigger_generation() after the user confirms "yes" in Step 4.
+
+CRITICAL RULES:
+- NEVER call trigger_generation() unless you have ALL THREE: a real goal, a real genre, AND at least one real URL.
+- NEVER assume, invent, or use default values for goal, genre, or links.
+- If any of the three is missing, ask for it before proceeding.
+- Do NOT call trigger_generation() after a simple greeting or if the user hasn't provided all three items.
 
 Keep responses SHORT (2-3 sentences). Be enthusiastic about music and learning.`;
 
@@ -45,6 +51,9 @@ const TRIGGER_GENERATION_DECLARATION = {
       goal: { type: 'STRING', description: "The user's learning goal" },
       genre: { type: 'STRING', description: 'Music genre preference' },
       links: { type: 'ARRAY', items: { type: 'STRING' }, description: 'URLs provided by the user' },
+      scalePreference: { type: 'STRING', description: 'Optional musical scale (e.g. "A Minor", "C Major", "minor", "major")' },
+      density: { type: 'NUMBER', description: 'Optional music density 0.0 (sparse) to 1.0 (full)' },
+      brightness: { type: 'NUMBER', description: 'Optional music brightness 0.0 (dark) to 1.0 (bright)' },
     },
     required: ['goal', 'genre', 'links'],
   },
@@ -181,6 +190,9 @@ async function handleLiveSession(ws, chatId, baseUrl) {
             turnComplete: true,
           },
         }));
+      } else if (msg.type === 'trigger_manual') {
+        // Browser "Generate with Settings" or "Straight Echoing!" button
+        handleManualTrigger(msg);
       } else if (msg.type === 'image') {
         geminiWs.send(JSON.stringify({
           clientContent: {
@@ -209,12 +221,94 @@ async function handleLiveSession(ws, chatId, baseUrl) {
     if (geminiWs && geminiWs.readyState === WebSocket.OPEN) geminiWs.close();
   });
 
+  // ── Manual trigger from browser buttons ───────────────────────────────────
+  async function handleManualTrigger(msg) {
+    if (generationTriggered) return;
+
+    // Read session to validate collected data
+    let session;
+    try {
+      session = await getSession(chatId);
+    } catch (err) {
+      console.error('[Live] handleManualTrigger: failed to read session', err);
+      sendToClient({ type: 'error', message: 'Failed to read session. Please try again.' });
+      return;
+    }
+
+    const { goal, genre, links } = session || {};
+    if (!goal || !goal.trim()) {
+      sendToClient({ type: 'error', message: 'Please share your learning goal via voice or text first.' });
+      return;
+    }
+    if (!genre || !genre.trim()) {
+      sendToClient({ type: 'error', message: 'Please share your music genre preference first.' });
+      return;
+    }
+    if (!Array.isArray(links) || links.length === 0) {
+      sendToClient({ type: 'error', message: 'Please share at least one URL first.' });
+      return;
+    }
+
+    generationTriggered = true;
+
+    const musicSettings = {};
+    if (!msg.useDefaults) {
+      if (msg.scalePreference) musicSettings.scalePreference = msg.scalePreference;
+      if (typeof msg.density === 'number') musicSettings.density = msg.density;
+      if (typeof msg.brightness === 'number') musicSettings.brightness = msg.brightness;
+    }
+
+    console.log(`[Live] Manual trigger for chat ${chatId}:`, { goal, genre, linksCount: links.length, musicSettings });
+
+    try {
+      await updateSession(chatId, {
+        status: 'processing',
+        generation_results: {
+          lyrics: '', image_url: '', audio_url: '', video_url: '',
+          musical_dna: { bpm: '', mood: '', key: '' }, image_prompt: '',
+        },
+      });
+
+      sendToClient({ type: 'generation_started', digestUrl: `/digest/${chatId}`, chatId });
+      runGenerationPipeline(chatId, null, musicSettings).catch(console.error);
+    } catch (err) {
+      console.error('[Live] handleManualTrigger error:', err);
+      generationTriggered = false;
+      sendToClient({ type: 'error', message: 'Failed to start generation.' });
+    }
+  }
+
   // ── Tool: trigger generation ───────────────────────────────────────────────
   async function handleTriggerGeneration(args, callId) {
     if (generationTriggered) return;
     generationTriggered = true;
 
-    const { goal = 'Learning and growing', genre = 'Lo-fi Hip Hop', links = [] } = args;
+    const { goal, genre, links, scalePreference, density, brightness } = args;
+    const musicSettings = {};
+    if (scalePreference) musicSettings.scalePreference = scalePreference;
+    if (typeof density === 'number') musicSettings.density = density;
+    if (typeof brightness === 'number') musicSettings.brightness = brightness;
+
+    // Guard: require all three fields to be genuinely provided
+    if (!goal || typeof goal !== 'string' || !goal.trim()) {
+      console.warn(`[Live] trigger_generation called without goal — ignoring`);
+      generationTriggered = false; // allow retry
+      sendToClient({ type: 'error', message: 'Missing goal. Please tell Echo what you want to learn.' });
+      return;
+    }
+    if (!genre || typeof genre !== 'string' || !genre.trim()) {
+      console.warn(`[Live] trigger_generation called without genre — ignoring`);
+      generationTriggered = false;
+      sendToClient({ type: 'error', message: 'Missing genre. Please tell Echo what music genre you prefer.' });
+      return;
+    }
+    if (!Array.isArray(links) || links.length === 0) {
+      console.warn(`[Live] trigger_generation called without links — ignoring`);
+      generationTriggered = false;
+      sendToClient({ type: 'error', message: 'Missing links. Please share at least one URL.' });
+      return;
+    }
+
     console.log(`[Live] Triggering generation for chat ${chatId}:`, { goal, genre, linksCount: links.length });
 
     try {
@@ -240,8 +334,8 @@ async function handleLiveSession(ws, chatId, baseUrl) {
         }));
       }
 
-      sendToClient({ type: 'generation_started', digestUrl: `${baseUrl}/digest/${chatId}`, chatId });
-      runGenerationPipeline(chatId, null).catch(console.error);
+      sendToClient({ type: 'generation_started', digestUrl: `/digest/${chatId}`, chatId });
+      runGenerationPipeline(chatId, null, musicSettings).catch(console.error);
     } catch (err) {
       console.error('[Live] handleTriggerGeneration error:', err);
       sendToClient({ type: 'error', message: 'Failed to start generation.' });

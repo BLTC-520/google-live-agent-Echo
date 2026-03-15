@@ -7,9 +7,10 @@ const { GoogleAuth } = require('google-auth-library');
 const { Storage } = require('@google-cloud/storage');
 const path = require('path');
 const fs = require('fs');
+const WebSocket = require('ws');
 
 const AGENT_DESCRIPTION =
-  'Generates album cover art (Imagen 4) and music track (Lyria 3) in parallel';
+  'Generates album cover art (Imagen 4) and music track (Lyria RealTime) in parallel';
 
 const PROJECT_ID = () => process.env.GOOGLE_CLOUD_PROJECT;
 const LOCATION = () => process.env.GOOGLE_CLOUD_REGION || 'us-central1';
@@ -77,58 +78,209 @@ async function generateAlbumCover(imagePrompt, chatId) {
   }
 }
 
-// ── Lyria 3: Music Track ─────────────────────────────────────────────
-async function generateMusic(lyrics, genre, musicalDna, musicDirection, chatId) {
-  try {
-    console.log('[ArtistAgent] Calling Lyria 3...');
+// ── WAV header builder (16-bit signed PCM, 48 kHz, stereo) ───────────
+function buildWavBuffer(pcmBuffer, sampleRate = 48000, channels = 2, bitDepth = 16) {
+  const byteRate = (sampleRate * channels * bitDepth) / 8;
+  const blockAlign = (channels * bitDepth) / 8;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + pcmBuffer.length, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);            // PCM format
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitDepth, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(pcmBuffer.length, 40);
+  return Buffer.concat([header, pcmBuffer]);
+}
 
-    const client = await auth.getClient();
-    const { token } = await client.getAccessToken();
+// ── Lyria RealTime (Experimental): Music Track ───────────────────────
+const TARGET_DURATION_SECS = 60;
+const SAMPLE_RATE = 48000;
+const CHANNELS = 2;
+const BIT_DEPTH = 16;
+const TARGET_PCM_BYTES = TARGET_DURATION_SECS * SAMPLE_RATE * CHANNELS * (BIT_DEPTH / 8); // ~11.5 MB
 
-    const endpoint = `https://${LOCATION()}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID()}/locations/${LOCATION()}/publishers/google/models/lyria-003:predict`;
+const SCALE_MAP = {
+  'C Major': 'SCALE_C_MAJOR', 'A Minor': 'SCALE_A_MINOR',
+  'G Major': 'SCALE_G_MAJOR', 'E Minor': 'SCALE_E_MINOR',
+  'D Major': 'SCALE_D_MAJOR', 'B Minor': 'SCALE_B_MINOR',
+  'A Major': 'SCALE_A_MAJOR', 'F# Minor': 'SCALE_F_SHARP_MINOR',
+  'E Major': 'SCALE_E_MAJOR', 'C# Minor': 'SCALE_C_SHARP_MINOR',
+  'F Major': 'SCALE_F_MAJOR', 'D Minor': 'SCALE_D_MINOR',
+};
 
-    const bpm = parseInt(musicalDna?.bpm) || 120;
-    const prompt = `A ${genre} track. ${musicDirection || ''}. Lyrics: ${lyrics}. Style: Professional production, catchy melody, ${musicalDna?.mood || 'energetic'} mood.`;
+function resolveScale(scalePreference) {
+  if (!scalePreference) return null;
+  // Direct match (e.g. "A Minor")
+  if (SCALE_MAP[scalePreference]) return SCALE_MAP[scalePreference];
+  // Simple major/minor shorthand
+  const lower = scalePreference.toLowerCase();
+  if (lower === 'minor') return 'SCALE_A_MINOR';
+  if (lower === 'major') return 'SCALE_C_MAJOR';
+  return null;
+}
 
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        instances: [{ prompt }],
-        parameters: {
-          sampleCount: 1,
-          durationSeconds: 30,
-          musicGenerationMode: 'VOCALIZATION',
-          bpm,
-        },
-      }),
+async function generateMusic(lyrics, genre, musicalDna, musicDirection, chatId, musicSettings = {}) {
+  return new Promise((resolve) => {
+    console.log('[ArtistAgent] Calling Lyria RealTime Experimental API...');
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.error('[ArtistAgent] No GEMINI_API_KEY found. Falling back.');
+      resolve(useFallbackTrack(chatId));
+      return;
+    }
+
+    const host = 'wss://generativelanguage.googleapis.com';
+    const wsUrl = `${host}/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateMusic?key=${apiKey}`;
+
+    const ws = new WebSocket(wsUrl);
+    let audioChunks = [];
+    let totalPcmBytes = 0;
+    let timeoutId;
+    let isCompleted = false;
+
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (ws.readyState === WebSocket.OPEN) ws.close();
+    };
+
+    const finishStream = async () => {
+      if (isCompleted) return;
+      isCompleted = true;
+      cleanup();
+
+      if (audioChunks.length === 0) {
+        console.warn('[ArtistAgent] Lyria RealTime stream ended but no audio was received.');
+        resolve(useFallbackTrack(chatId));
+        return;
+      }
+
+      try {
+        console.log(`[ArtistAgent] Lyria stream complete. Received ${audioChunks.length} chunks. Building WAV...`);
+        const pcmBuffers = audioChunks.map(b64 => Buffer.from(b64, 'base64'));
+        const pcmBuffer = Buffer.concat(pcmBuffers);
+        const wavBuffer = buildWavBuffer(pcmBuffer);
+
+        const fileName = `tracks/${chatId}_${Date.now()}.wav`;
+        const url = await uploadToGCS(wavBuffer, fileName, 'audio/wav');
+        console.log(`[ArtistAgent] Music track uploaded (${(wavBuffer.length / 1024 / 1024).toFixed(1)} MB).`);
+        resolve(url);
+      } catch (err) {
+        console.error('[ArtistAgent] Failed to upload Lyria audio:', err.message);
+        resolve(useFallbackTrack(chatId));
+      }
+    };
+
+    ws.on('open', () => {
+      console.log('[ArtistAgent] Lyria WebSocket connected. Sending setup...');
+
+      // model must be included in setup — its absence causes the 404/rejection
+      ws.send(JSON.stringify({
+        setup: {
+          model: 'models/lyria-realtime-exp',
+        }
+      }));
+
+      timeoutId = setTimeout(() => {
+        console.error('[ArtistAgent] Lyria generation timed out after 90s.');
+        finishStream();
+      }, 90000);
     });
 
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Lyria API ${res.status}: ${body.substring(0, 200)}`);
-    }
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
 
-    const data = await res.json();
-    const audioBase64 = data.predictions?.[0]?.bytesBase64Encoded;
+        if (msg.setupComplete !== undefined) {
+          console.log('[ArtistAgent] Lyria setup complete. Sending prompts + config + play...');
 
-    if (audioBase64) {
-      const buffer = Buffer.from(audioBase64, 'base64');
-      const fileName = `tracks/${chatId}_${Date.now()}.wav`;
-      const url = await uploadToGCS(buffer, fileName, 'audio/wav');
-      console.log(`[ArtistAgent] Music track generated & uploaded (${(buffer.length / 1024 / 1024).toFixed(1)} MB).`);
-      return url;
-    }
+          const bpm = parseInt(musicalDna?.bpm) || 90;
+          const promptText = [
+            genre,
+            musicDirection,
+            musicalDna?.mood,
+            lyrics ? `lyrics themes: ${lyrics}` : null,
+          ].filter(Boolean).join(', ');
 
-    console.warn('[ArtistAgent] Lyria 3 returned no audio — using fallback track.');
-    return useFallbackTrack(chatId);
-  } catch (err) {
-    console.error('[ArtistAgent] Lyria 3 error:', err.message);
-    return useFallbackTrack(chatId);
-  }
+          // 1. Weighted prompts — SDK wraps these in clientContent
+          ws.send(JSON.stringify({
+            clientContent: {
+              weightedPrompts: [{ text: promptText, weight: 1.0 }]
+            }
+          }));
+
+          // 2. Music generation config — sent unwrapped
+          const musicConfig = { bpm, temperature: 1.0 };
+          const scale = resolveScale(musicSettings.scalePreference);
+          if (scale) {
+            musicConfig.scale = scale;
+            console.log(`[ArtistAgent] scale: ${scale}`);
+          }
+          if (typeof musicSettings.density === 'number') musicConfig.density = musicSettings.density;
+          if (typeof musicSettings.brightness === 'number') musicConfig.brightness = musicSettings.brightness;
+          ws.send(JSON.stringify({ musicGenerationConfig: musicConfig }));
+
+          // 3. Start streaming
+          ws.send(JSON.stringify({ playbackControl: 'PLAY' }));
+          return;
+        }
+
+        const serverContent = msg.serverContent;
+        if (!serverContent) return;
+
+        // Response schema: serverContent.audioChunks[].data (base64 PCM)
+        const chunks = serverContent.audioChunks || [];
+        for (const chunk of chunks) {
+          if (chunk.data) {
+            const chunkBytes = Buffer.from(chunk.data, 'base64').length;
+            totalPcmBytes += chunkBytes;
+            audioChunks.push(chunk.data);
+
+            // Reset inactivity timeout on each received chunk
+            if (timeoutId) clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => {
+              console.error('[ArtistAgent] Lyria timed out — no audio received for 30s.');
+              finishStream();
+            }, 30000);
+
+            // Stop once we have ~1 minute of audio
+            if (totalPcmBytes >= TARGET_PCM_BYTES) {
+              const secs = (totalPcmBytes / (SAMPLE_RATE * CHANNELS * (BIT_DEPTH / 8))).toFixed(1);
+              console.log(`[ArtistAgent] Reached ${secs}s of audio. Sending PAUSE.`);
+              ws.send(JSON.stringify({ playbackControl: 'PAUSE' }));
+              finishStream();
+              return;
+            }
+          }
+        }
+
+        if (serverContent.turnComplete) {
+          console.log('[ArtistAgent] Server marked turn as complete.');
+          finishStream();
+        }
+
+      } catch (err) {
+        console.error('[ArtistAgent] WebSocket parse error:', err.message);
+      }
+    });
+
+    ws.on('error', (err) => {
+      console.error('[ArtistAgent] Lyria WebSocket error:', err.message);
+      finishStream();
+    });
+
+    ws.on('close', (code) => {
+      console.log(`[ArtistAgent] Lyria WebSocket closed (code ${code}).`);
+      finishStream();
+    });
+  });
 }
 
 async function useFallbackTrack(chatId) {
@@ -146,15 +298,15 @@ async function useFallbackTrack(chatId) {
 }
 
 /**
- * @param {{ imagePrompt, lyrics, genre, musicalDna, musicDirection, chatId }} params
+ * @param {{ imagePrompt, lyrics, genre, musicalDna, musicDirection, chatId, musicSettings? }} params
  * @returns {Promise<{ coverResult: { url, base64 }, audioUrl: string }>}
  */
-async function run({ imagePrompt, lyrics, genre, musicalDna, musicDirection, chatId }) {
+async function run({ imagePrompt, lyrics, genre, musicalDna, musicDirection, chatId, musicSettings = {} }) {
   console.log('[ArtistAgent] Running Imagen 4 + Lyria 3 in parallel...');
 
   const [coverResult, audioUrl] = await Promise.all([
     generateAlbumCover(imagePrompt, chatId),
-    generateMusic(lyrics, genre, musicalDna, musicDirection, chatId),
+    generateMusic(lyrics, genre, musicalDna, musicDirection, chatId, musicSettings),
   ]);
 
   console.log('[ArtistAgent] Parallel generation complete.');

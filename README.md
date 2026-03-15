@@ -2,9 +2,9 @@
 
 > Talk to Echo. Share what inspires you. Get a song that teaches you.
 
-Echo is a **multimodal AI agent** built for the **Google Live Agent Challenge 2026**. Tell Echo what you're learning, share some links, and it transforms your reading list into a personalized AI-generated music track — complete with lyrics, an album cover, and a music video.
+Echo is a **multimodal AI agent** built for the **Google Live Agent Challenge 2026**. Tell Echo what you're learning, share some links, and it transforms your reading list into a personalized AI-generated music track — complete with lyrics, an AI-generated album cover, and a full music track.
 
-**Category: Creative Storyteller** — blending voice, text, images, audio, and video into one seamless experience.
+**Category: Creative Storyteller** — blending voice, text, images, and audio into one seamless experience.
 
 ---
 
@@ -24,7 +24,7 @@ Echo is a **multimodal AI agent** built for the **Google Live Agent Challenge 20
 1. **Open `/live`** — Echo greets you via voice
 2. **Tell Echo** your learning goal, preferred genre, and paste some links
 3. **Echo generates** your track and redirects you to the result page
-4. **Listen** — lyrics, album cover, music, and music video, all in one page
+4. **Listen** — lyrics, album cover, and audio player, all in one page
 
 ### Telegram Flow
 
@@ -63,18 +63,15 @@ Gemini Live API  ←──── real-time bidirectional audio (PCM 16kHz ↔ 24
 ║    └─ Imagen 4 → album cover    │  (parallel)            ║
 ║    └─ Lyria 3 → 30s music track │                        ║
 ║         └───────────┬───────────┘                        ║
-║                     │                                    ║
-║  Agent 4: VideographerAgent                              ║
-║    └─ Veo 3 → 6-second music video                       ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝
         │
         ▼
-Google Cloud Storage (album cover + audio + video)
+Google Cloud Storage (album cover + audio)
         │
         ▼
 Web Result Page  ←── real-time SSE progress updates
-  lyrics · album art · audio player · music video
+  lyrics · album art · audio player
 ```
 
 ---
@@ -88,7 +85,6 @@ Web Result Page  ←── real-time SSE progress updates
 | AI — text | Gemini 2.5 Pro / Flash (`@google/genai`) |
 | AI — image | Imagen 4 (`imagen-4.0-generate-001`, Vertex AI) |
 | AI — music | Lyria 3 (`lyria-003`, Vertex AI) |
-| AI — video | Veo 3 (`veo-3.1-generate-001`, Vertex AI) |
 | Database | Cloud Firestore (session state) |
 | Storage | Google Cloud Storage (all generated media) |
 | Bot | Telegraf v4 (Telegram webhook, optional) |
@@ -109,8 +105,7 @@ echo-knowledge-dj/
 │   ├── index.js        # Multi-agent DAG orchestrator + pipelineEvents
 │   ├── content_analyst.js    # Scrapes + analyzes source content
 │   ├── creative_director.js  # Gemini 2.5 Pro lyrics + art direction
-│   ├── artist.js             # Imagen 4 + Lyria 3 (parallel)
-│   └── videographer.js       # Veo 3 music video
+│   └── artist.js             # Imagen 4 + Lyria 3 (parallel)
 ├── bot.js              # Telegram bot (backup interface)
 ├── db.js               # Firestore helpers
 ├── scraper.js          # YouTube / Twitter / web content extraction
@@ -197,6 +192,7 @@ npm run setup-webhook
 |---|---|
 | `/` | Landing page |
 | `/live` | Voice session with Gemini Live API |
+| `/demo` | Web form — enter goal, genre, and links without Telegram |
 | `/digest/:chat_id` | Dashboard / Processing / Result (auto-switches by status) |
 | `/api/pipeline-status/:chat_id` | SSE stream of real-time agent progress |
 
@@ -208,7 +204,6 @@ npm run setup-webhook
 |---|---|
 | Lyria 3 unavailable | Uploads bundled `Immutable_Code.mp3` to GCS |
 | Imagen 4 fails | Uses Echo logo as album cover |
-| Veo 3 fails / times out | Result page renders with static image + audio |
 | Gemini 2.5 Pro quota | Falls back to Gemini 2.5 Flash |
 | Microphone denied | Text input available on `/live` page |
 

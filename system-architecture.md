@@ -25,9 +25,8 @@ graph TB
         subgraph Agents["🤖 Multi-Agent DAG (agents/)"]
             A1["Agent 1\ncontent_analyst.js\nScrape + Analyze"]
             A2["Agent 2\ncreative_director.js\nLyrics + Direction"]
-            A3["Agent 3\nartist.js\nImagen4 + Lyria3"]
-            A4["Agent 4\nvideographer.js\nVeo3 Video"]
-            A1 --> A2 --> A3 --> A4
+            A3["Agent 3\nartist.js\nImagen4 + Lyria RealTime"]
+            A1 --> A2 --> A3
         end
     end
 
@@ -35,8 +34,7 @@ graph TB
         GEMINI_LIVE["Gemini 2.5 Flash\nNative Audio Preview\n(AI Studio Live API)"]
         GEMINI_TEXT["Gemini 2.5 Pro/Flash\n(text generation)"]
         IMAGEN["Imagen 4\n(album art)"]
-        LYRIA["Lyria 3\n(music generation)"]
-        VEO["Veo 3\n(music video)"]
+        LYRIA["Lyria 3\n(music generation via AI Studio)"]
         FS["Firestore\n(sessions)"]
         GCS["Cloud Storage\n(media files)"]
     end
@@ -46,7 +44,7 @@ graph TB
     MIC -->|"PCM audio chunks"| LIVE
     LIVE -->|"audio chunks"| SPK
     UI -->|"HTTP GET /live"| SRV
-    UI -->|"SSE /events/:chatId"| SRV
+    UI -->|"SSE /api/pipeline-status/:chatId"| SRV
 
     %% Telegram <-> Server
     BOT_USER -->|"HTTPS webhook"| BOT
@@ -72,9 +70,7 @@ graph TB
     A2 -->|"lyrics generation"| GEMINI_TEXT
     A3 -->|"image generation"| IMAGEN
     A3 -->|"music generation"| LYRIA
-    A4 -->|"video generation"| VEO
     A3 -->|"upload media"| GCS
-    A4 -->|"upload video"| GCS
 
     %% DB
     DB_MOD <-->|"read/write sessions"| FS
@@ -100,7 +96,7 @@ sequenceDiagram
     Server->>GeminiLive: WSS open + send {setup: model, config, tools}
     GeminiLive-->>Server: {setupComplete}
     Server-->>Browser: {type: "ready"}
-    Browser->>Server: {type: "text", data: "Hello"}
+    Note over Server,GeminiLive: Server nudges Gemini with "Hello"
     Server->>GeminiLive: clientContent "Hello"
     GeminiLive-->>Server: audio chunks (greeting)
     Server-->>Browser: {type: "audio", data: base64PCM}
@@ -119,13 +115,15 @@ sequenceDiagram
     Server->>Server: updateSession() in Firestore
     Server->>GeminiLive: toolResponse {success: true}
     Server-->>Browser: {type: "generation_started", digestUrl: "/digest/xxx"}
-    Browser->>User: Redirects to /digest/xxx
+    Browser->>Server: GET /digest/xxx → processing page (HTML)
+    Note over Browser: showProgressPanel() opens SSE connection
 
-    Server->>Pipeline: runGenerationPipeline(chatId) [async]
-    Pipeline->>Pipeline: Agent 1 → 2 → 3 → 4
-    Pipeline->>GCS: Upload audio, image, video
-    Pipeline->>Server: SSE progress events
-    Browser->>User: Shows processing page → result page
+    Server->>Pipeline: runGenerationPipeline(chatId) [fire-and-forget]
+    Pipeline->>Pipeline: Agent 1 → 2 → 3
+    Pipeline->>GCS: Upload audio, image
+    Pipeline-->>Browser: SSE progress events (stage, progress %)
+    Note over Browser: On stage=complete → window.location.href = /digest/xxx
+    Browser->>Server: GET /digest/xxx → result page (status=completed)
 ```
 
 ---
@@ -155,7 +153,7 @@ flowchart TD
 
     subgraph A3["Agent 3: Artist"]
         IG["Imagen 4\nGenerate album art"]
-        LY{"Lyria 3\nGenerate music"}
+        LY{"Lyria RealTime\nGenerate music\n(WebSocket)"}
         LY_OK["Upload audio to GCS"]
         LY_FB["Fallback:\nImmutable_Code.mp3"]
         IG --> LY
@@ -163,17 +161,7 @@ flowchart TD
         LY -->|fail| LY_FB
     end
 
-    A3 --> A4
-
-    subgraph A4["Agent 4: Videographer"]
-        VEO{"Veo 3\nGenerate video\nfrom image + prompt"}
-        VEO_OK["Upload video to GCS"]
-        VEO_SKIP["Skip video\n(optional field)"]
-        VEO -->|success| VEO_OK
-        VEO -->|fail/timeout| VEO_SKIP
-    end
-
-    A4 --> SAVE["Update Firestore session\nstatus: completed\nall URLs stored"]
+    A3 --> SAVE["Update Firestore session\nstatus: completed\nall URLs stored"]
     SAVE --> SSE["SSE event → browser\nredirect to result page"]
     SSE --> DONE([Result page shown])
 ```
@@ -192,9 +180,11 @@ sessions/{chatId}
 ├── status: "pending" | "processing" | "completed" | "error"
 ├── created_at: timestamp
 └── generation_results:
+    ├── track_title: string    ← short catchy song name (3-5 words)
     ├── lyrics: string
     ├── image_url: string      ← GCS public URL
     ├── audio_url: string      ← GCS public URL
+    ├── audio_mime_type: string ← e.g. "audio/wav" or "audio/mpeg"
     ├── video_url: string      ← GCS public URL (optional)
     ├── image_prompt: string
     └── musical_dna:
@@ -202,3 +192,45 @@ sessions/{chatId}
         ├── mood: string
         └── key: string
 ```
+
+---
+
+## 5. Bug Fixes Applied
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| Frontend never redirected to result page after pipeline complete | `live-session.js` sent absolute `digestUrl` (`http://host/digest/id`); client security check required relative path starting with `/` so `dest` was always `null` | Changed server to send `/digest/${chatId}` (path only, no origin) |
+| Result page showed no track title | `track_title` field existed in `generation_results` but was never rendered | Added `<div class="track-title">` in hero block of result page |
+
+---
+
+## 6. Result Page Design (Spotify-inspired)
+
+```
+┌─────────────────────────────────────────┐
+│  ECHO nav                  + New Track  │
+├─────────────────────────────────────────┤
+│  [blurred album bg — full page]         │
+│                                         │
+│       [Album Art 220×220]               │
+│    Track Title Here                     │
+│    🎯 Web3 security  •  🎵 Synthwave    │
+│    BPM 120  •  Mood: Focused  •  C Maj  │
+│                                         │
+│  ─── LYRICS ────────────────────────── │
+│    line 1 (dim)                         │
+│    LINE 2 ACTIVE (large, accent)        │
+│    line 3 (near — medium)               │
+│    line 4 (dim)                         │
+│                                         │
+├─────────────────────────────────────────┤
+│ [art] Track Title    ▶  ──●──  0:23/1:00│  ← sticky player bar
+│       Genre               [Download]   │
+└─────────────────────────────────────────┘
+```
+
+Key features:
+- Blurred album art as page background (`filter: blur(80px) brightness(0.18)`)
+- Lyric lines: `active` (large, full color) / `near` (adjacent lines, medium) / dim (rest)
+- Custom player bar: play/pause SVG swap, scrubable progress track, keyboard seek (←→ ±5s, Space)
+- `+ New Track` nav link routes back to `/live`

@@ -4,9 +4,9 @@
  */
 const express = require('express');
 const path = require('path');
-const { getSession } = require('./db');
+const { getSession, updateSession } = require('./db');
 const { bot } = require('./bot');
-const { pipelineEvents } = require('./ai_pipeline');
+const { pipelineEvents, pipelineState, runGenerationPipeline } = require('./ai_pipeline');
 
 const app = express();
 
@@ -26,15 +26,19 @@ app.get('/api/pipeline-status/:chat_id', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const onProgress = (event) => {
+  const send = (event) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`);
     if (event.stage === 'complete') res.end();
   };
 
-  pipelineEvents.on(`progress:${chat_id}`, onProgress);
+  // Replay last known state so late-joining clients catch up immediately
+  const currentState = pipelineState.get(chat_id);
+  if (currentState) send(currentState);
+
+  pipelineEvents.on(`progress:${chat_id}`, send);
 
   req.on('close', () => {
-    pipelineEvents.off(`progress:${chat_id}`, onProgress);
+    pipelineEvents.off(`progress:${chat_id}`, send);
   });
 });
 
@@ -255,8 +259,8 @@ app.get('/', (req, res) => {
       <a href="/live" class="btn-primary">
         Talk to Echo Live
       </a>
-      <a href="https://t.me/${botUsername}" class="btn-secondary" target="_blank">
-        Telegram Bot
+      <a href="/demo" class="btn-secondary">
+        Try Demo Form
       </a>
     </div>
   </main>
@@ -280,6 +284,10 @@ app.get('/digest/:chat_id', async (req, res) => {
 
     if (session.status === 'completed') {
       return res.send(renderResultPage(session, chat_id));
+    }
+
+    if (session.status === 'error') {
+      return res.send(renderPipelineErrorPage(chat_id));
     }
 
     // Default: idle / dashboard view
@@ -438,9 +446,40 @@ function renderDashboardPage(session, chatId) {
 }
 
 // =============================================================
-// Processing Page (Wireframe #3) — animated spinner
+// Processing Page (Wireframe #3) — phase stepper + progress bar
 // =============================================================
 function renderProcessingPage(session, chatId) {
+  const sourceCount = (session.links || []).length;
+  const genre = escapeHtml(session.genre || 'custom');
+
+  const steps = [
+    { id: 'content_analyst',   num: 1, icon: '🔍', label: 'Content Analyst',          desc: 'Reading & analyzing your sources' },
+    { id: 'creative_director', num: 2, icon: '✍️', label: 'Creative Director',         desc: 'Writing lyrics & creative brief' },
+    { id: 'artist',            num: 3, icon: '🎨', label: 'Artist',                    desc: 'Generating album cover & music' },
+  ];
+
+  const stepHtml = steps.map(s => `
+      <div class="phase-step" id="step-${s.id}">
+        <div class="phase-icon-wrap">
+          <span class="phase-num">${s.num}</span>
+          <svg class="phase-check" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M3 8l3.5 3.5L13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div class="phase-spinner" aria-hidden="true">
+            <div class="phase-spinner-ring"></div>
+          </div>
+        </div>
+        <div class="phase-text">
+          <span class="phase-label">${s.icon} ${s.label}</span>
+          <span class="phase-desc">${s.desc}</span>
+        </div>
+        <div class="phase-status-badge">
+          <span class="badge-pending">Pending</span>
+          <span class="badge-active">In progress</span>
+          <span class="badge-done">Done</span>
+        </div>
+      </div>`).join('');
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -448,10 +487,10 @@ function renderProcessingPage(session, chatId) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mastering Your Track... — Echo</title>
   ${getFontLinks()}
-  <meta http-equiv="refresh" content="15">
   <style>
     ${getBaseStyles()}
 
+    /* ── Layout ── */
     .processing {
       display: flex;
       flex-direction: column;
@@ -459,33 +498,35 @@ function renderProcessingPage(session, chatId) {
       justify-content: center;
       min-height: calc(100vh - 80px);
       text-align: center;
-      padding: 2rem;
+      padding: 2rem 1rem;
     }
 
     .processing h1 {
       font-size: 1.75rem;
       font-weight: 700;
-      margin-top: 2.5rem;
-      margin-bottom: 0.75rem;
+      margin-top: 2rem;
+      margin-bottom: 0.5rem;
     }
 
-    .processing p {
+    .processing .subtitle {
       color: var(--text-muted);
-      font-size: 0.95rem;
+      font-size: 0.9rem;
+      margin-bottom: 2rem;
     }
 
-    /* Soundwave ring animation */
+    /* ── Soundwave ring ── */
     .wave-ring {
       position: relative;
-      width: 200px;
-      height: 200px;
+      width: 160px;
+      height: 160px;
+      flex-shrink: 0;
     }
 
     .wave-ring .center-circle {
       position: absolute;
       top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      width: 80px; height: 80px;
+      width: 64px; height: 64px;
       border-radius: 50%;
       background: var(--accent);
       opacity: 0.9;
@@ -499,34 +540,204 @@ function renderProcessingPage(session, chatId) {
       border: 1px solid rgba(14,184,208,0.25);
       animation: ringPulse 2.4s ease-out infinite;
     }
-
     .wave-ring .ring:nth-child(2) { animation-delay: 0.5s; }
     .wave-ring .ring:nth-child(3) { animation-delay: 1s; }
     .wave-ring .ring:nth-child(4) { animation-delay: 1.5s; }
-    .wave-ring .ring:nth-child(5) { animation-delay: 2s; }
 
     @keyframes ringPulse {
-      0% { width: 80px; height: 80px; opacity: 0.7; }
-      100% { width: 200px; height: 200px; opacity: 0; }
+      0%   { width: 64px;  height: 64px;  opacity: 0.7; }
+      100% { width: 160px; height: 160px; opacity: 0; }
     }
 
-    /* Equalizer bars */
+    /* ── Overall progress bar ── */
+    .progress-wrap {
+      width: 100%;
+      max-width: 480px;
+      margin-bottom: 2rem;
+    }
+
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 0.5rem;
+    }
+
+    .progress-header #agentLabel {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .progress-header #progressPct {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .progress-track {
+      background: var(--surface-2);
+      border-radius: 100px;
+      height: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    #progressBar {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      border-radius: 100px;
+      transition: width 0.8s ease;
+      box-shadow: 0 0 8px rgba(14,184,208,0.5);
+    }
+
+    /* ── Phase stepper ── */
+    .phases {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      text-align: left;
+    }
+
+    .phase-step {
+      display: flex;
+      align-items: center;
+      gap: 0.875rem;
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      transition: border-color 0.3s ease, background 0.3s ease;
+    }
+
+    /* Icon wrap — stacks num / check / spinner */
+    .phase-icon-wrap {
+      position: relative;
+      width: 28px;
+      height: 28px;
+      flex-shrink: 0;
+    }
+
+    .phase-num,
+    .phase-check,
+    .phase-spinner {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.25s ease;
+    }
+
+    .phase-num {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text-subtle);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 1.5px solid var(--border);
+      background: var(--surface-2);
+    }
+
+    .phase-check {
+      opacity: 0;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: rgba(14,184,208,0.12);
+      color: var(--accent);
+    }
+
+    .phase-check svg { width: 14px; height: 14px; }
+
+    .phase-spinner {
+      opacity: 0;
+    }
+
+    .phase-spinner-ring {
+      width: 20px;
+      height: 20px;
+      border: 2px solid rgba(14,184,208,0.25);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Text block */
+    .phase-text {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.1rem;
+    }
+
+    .phase-label {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text-subtle);
+      transition: color 0.3s ease;
+    }
+
+    .phase-desc {
+      font-size: 0.75rem;
+      color: var(--text-subtle);
+      opacity: 0.6;
+      transition: opacity 0.3s ease;
+    }
+
+    /* Status badge */
+    .phase-status-badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .badge-pending { color: var(--text-subtle); }
+    .badge-active  { color: var(--accent);      display: none; }
+    .badge-done    { color: var(--text-muted);  display: none; }
+
+    /* ── States ── */
+    .phase-step.active {
+      border-color: var(--accent-border);
+      background: var(--accent-dim);
+    }
+
+    .phase-step.active .phase-num     { opacity: 0; }
+    .phase-step.active .phase-spinner { opacity: 1; }
+    .phase-step.active .phase-label   { color: var(--accent); }
+    .phase-step.active .phase-desc    { opacity: 1; }
+    .phase-step.active .badge-pending { display: none; }
+    .phase-step.active .badge-active  { display: inline; }
+
+    .phase-step.done .phase-num     { opacity: 0; }
+    .phase-step.done .phase-check   { opacity: 1; }
+    .phase-step.done .phase-spinner { opacity: 0; }
+    .phase-step.done .phase-label   { color: var(--text-muted); }
+    .phase-step.done .badge-pending { display: none; }
+    .phase-step.done .badge-done    { display: inline; }
+
+    /* ── Equalizer ── */
     .equalizer {
       display: flex;
       gap: 3px;
       align-items: flex-end;
-      height: 32px;
-      margin-top: 2rem;
+      height: 28px;
+      margin-top: 1.75rem;
     }
 
     .eq-bar {
       width: 3px;
       border-radius: 2px;
       background: var(--accent);
-      opacity: 0.7;
+      opacity: 0.55;
       animation: eqBounce 0.8s ease-in-out infinite alternate;
     }
-    /* Stagger durations across bars using prime-ish offsets so they never sync */
     .eq-bar:nth-child(1)  { animation-duration: 0.65s; animation-delay: 0.00s; }
     .eq-bar:nth-child(2)  { animation-duration: 0.90s; animation-delay: 0.10s; }
     .eq-bar:nth-child(3)  { animation-duration: 0.72s; animation-delay: 0.20s; }
@@ -541,8 +752,8 @@ function renderProcessingPage(session, chatId) {
     .eq-bar:nth-child(12) { animation-duration: 0.83s; animation-delay: 0.30s; }
 
     @keyframes eqBounce {
-      0% { height: 6px; }
-      100% { height: 32px; }
+      0%   { height: 4px; }
+      100% { height: 28px; }
     }
   </style>
 </head>
@@ -560,55 +771,35 @@ function renderProcessingPage(session, chatId) {
       <div class="ring"></div>
       <div class="ring"></div>
       <div class="ring"></div>
-      <div class="ring"></div>
       <div class="center-circle"></div>
     </div>
 
     <h1><span class="gradient-text">Mastering Your Track...</span></h1>
-    <p id="statusMsg">Mixing ${(session.links || []).length} source(s) into your ${escapeHtml(session.genre || 'custom')} track.</p>
+    <p id="statusMsg" class="subtitle">Mixing ${sourceCount} source(s) into your ${genre} track.</p>
 
-    <!-- Agent progress bar -->
-    <div style="width: 100%; max-width: 440px; margin-top: 1.5rem;">
-      <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem;">
+    <!-- Overall progress bar -->
+    <div class="progress-wrap">
+      <div class="progress-header">
         <span id="agentLabel">Starting agents...</span>
         <span id="progressPct">0%</span>
       </div>
-      <div style="background: var(--surface-2); border-radius: 100px; height: 4px; overflow: hidden;">
-        <div id="progressBar" style="height: 100%; width: 0%; background: var(--accent); border-radius: 100px; transition: width 0.8s ease;"></div>
+      <div class="progress-track">
+        <div id="progressBar"></div>
       </div>
     </div>
 
-    <!-- Agent steps -->
-    <div style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem; width: 100%; max-width: 440px;">
-      <div class="agent-step" id="step-content_analyst">🔍 Content Analyst</div>
-      <div class="agent-step" id="step-creative_director">✍️ Creative Director</div>
-      <div class="agent-step" id="step-artist">🎨 Artist (Imagen 4 + Lyria 3)</div>
-      <div class="agent-step" id="step-videographer">🎬 Videographer (Veo 3)</div>
+    <!-- Phase stepper -->
+    <div class="phases">
+      ${stepHtml}
     </div>
 
-    <div class="equalizer" style="margin-top: 1.5rem;">
-      ${Array.from({ length: 12 }, (_, i) => `<div class="eq-bar"></div>`).join('')}
+    <div class="equalizer">
+      ${Array.from({ length: 12 }, () => '<div class="eq-bar"></div>').join('')}
     </div>
   </main>
 
-  <style>
-    .agent-step {
-      padding: 0.6rem 1rem;
-      border-radius: 8px;
-      font-size: 0.85rem;
-      color: var(--text-subtle);
-      background: var(--surface-1);
-      border: 1px solid var(--border);
-      transition: color 0.3s ease, border-color 0.3s ease, background 0.3s ease;
-    }
-    .agent-step.active { color: var(--accent); background: var(--accent-dim); border-color: var(--accent-border); }
-    .agent-step.done { color: var(--text-muted); }
-    .agent-step.done::after { content: ' ✓'; color: var(--accent); opacity: 0.7; }
-  </style>
-
   <script>
-    const stageOrder = ['content_analyst', 'creative_director', 'artist', 'videographer'];
-    let currentStageIdx = -1;
+    const stageOrder = ['content_analyst', 'creative_director', 'artist'];
     let hardFallback = null;
 
     const evtSource = new EventSource('/api/pipeline-status/${chatId}');
@@ -618,10 +809,12 @@ function renderProcessingPage(session, chatId) {
       try { data = JSON.parse(e.data); } catch { return; }
 
       const msg = data.message || '';
+      const pct = data.progress || 0;
+
       document.getElementById('statusMsg').textContent = msg;
-      document.getElementById('progressBar').style.width = (data.progress || 0) + '%';
-      document.getElementById('progressPct').textContent = (data.progress || 0) + '%';
       document.getElementById('agentLabel').textContent = msg;
+      document.getElementById('progressBar').style.width = pct + '%';
+      document.getElementById('progressPct').textContent = pct + '%';
 
       const stageIdx = stageOrder.indexOf(data.stage);
       if (stageIdx >= 0) {
@@ -632,8 +825,7 @@ function renderProcessingPage(session, chatId) {
         }
         // Mark current active
         const cur = document.getElementById('step-' + data.stage);
-        if (cur) cur.classList.add('active');
-        currentStageIdx = stageIdx;
+        if (cur) { cur.classList.remove('done'); cur.classList.add('active'); }
       }
 
       if (data.stage === 'complete') {
@@ -648,7 +840,7 @@ function renderProcessingPage(session, chatId) {
     };
 
     evtSource.onerror = () => {
-      // SSE not yet firing (pipeline just started or completed) — fall back to polling
+      // SSE not yet firing — fall back to polling
       evtSource.close();
       clearTimeout(hardFallback);
       setTimeout(() => window.location.reload(), 8000);
@@ -668,7 +860,11 @@ function renderResultPage(session, chatId) {
   const results = session.generation_results || {};
   const dna = results.musical_dna || {};
   const hasAudio = results.audio_url && results.audio_url.length > 0;
-  const hasVideo = results.video_url && results.video_url.length > 0;
+  const trackTitle = escapeHtml(results.track_title || 'Echo Track');
+  const goal = escapeHtml(session.goal || '');
+  const genre = escapeHtml(session.genre || '');
+  const coverSrc = safeUrl(results.image_url) || '/assets/echo_logo.jpg';
+  const audioMime = results.audio_mime_type || (results.audio_url && results.audio_url.match(/\.mp3(\?|$)/i) ? 'audio/mpeg' : 'audio/wav');
 
   // Process lyrics: split by newlines for display
   const lyricsLines = (results.lyrics || 'No lyrics generated.')
@@ -676,7 +872,7 @@ function renderResultPage(session, chatId) {
     .filter((l) => l.trim().length > 0);
 
   const lyricsHtml = lyricsLines
-    .map((line) => `<p class="lyric-line">${escapeHtml(line)}</p>`)
+    .map((line, i) => `<p class="lyric-line" data-line="${i}">${escapeHtml(line)}</p>`)
     .join('');
 
   return `<!DOCTYPE html>
@@ -684,121 +880,124 @@ function renderResultPage(session, chatId) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Your Track — Echo</title>
+  <title>${trackTitle} — Echo</title>
   ${getFontLinks()}
   <style>
     ${getBaseStyles()}
 
-    .result {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 2rem;
-      margin-top: 2rem;
-      min-height: calc(100vh - 160px);
+    /* ── Page shell ───────────────────────────────────────────── */
+    html, body { height: 100%; }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 100px; /* room for sticky player */
     }
 
-    /* Left panel — album art + controls */
-    .album-panel {
-      padding: 2rem;
+    /* ── Background: blurred album art ────────────────────────── */
+    .bg-blur {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      background-image: url('${coverSrc}');
+      background-size: cover;
+      background-position: center;
+      filter: blur(80px) brightness(0.18) saturate(1.4);
+      transform: scale(1.1); /* prevent white edges from blur */
+    }
+
+    /* ── Content above the background ────────────────────────── */
+    .page-content {
+      position: relative;
+      z-index: 1;
+      flex: 1;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 1.5rem;
+      padding: 2rem 1.5rem 2rem;
+      max-width: 720px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* ── Hero block ───────────────────────────────────────────── */
+    .hero-block {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 1.25rem;
+      width: 100%;
+      margin-bottom: 2.5rem;
     }
 
     .album-cover {
-      width: 100%;
-      max-width: 400px;
-      aspect-ratio: 1;
-      border-radius: 20px;
+      width: 220px;
+      height: 220px;
+      border-radius: 18px;
       object-fit: cover;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-      transition: transform 0.4s ease;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.7);
+      transition: transform 0.4s ease, box-shadow 0.4s ease;
     }
 
     .album-cover:hover {
-      transform: scale(1.02);
+      transform: scale(1.03);
+      box-shadow: 0 32px 80px rgba(0,0,0,0.8);
     }
 
-    .controls {
-      display: flex;
-      gap: 1rem;
-      width: 100%;
-      max-width: 400px;
-    }
-
-    .controls .btn-primary,
-    .controls .btn-secondary {
-      flex: 1;
-      justify-content: center;
-    }
-
-    audio {
-      width: 100%;
-      max-width: 400px;
-      border-radius: 12px;
-      outline: none;
-    }
-
-    audio::-webkit-media-controls-panel {
-      background: rgba(255, 255, 255, 0.06);
-    }
-
-    /* Right panel — lyrics + DNA */
-    .info-panel {
-      display: flex;
-      flex-direction: column;
-      gap: 1.5rem;
-    }
-
-    .lyrics-card {
-      padding: 2rem;
-      flex: 1;
-    }
-
-    .lyrics-card h2 {
-      font-size: 1.2rem;
+    .track-title {
+      font-size: 2rem;
       font-weight: 700;
-      margin-bottom: 1.25rem;
-    }
-
-    .lyric-line {
-      font-size: 0.95rem;
-      line-height: 2;
-      color: var(--text-muted);
-      transition: color 0.15s;
-    }
-
-    .lyric-line:hover {
+      letter-spacing: -0.02em;
+      line-height: 1.15;
       color: var(--text);
     }
 
-    .dna-card {
-      padding: 1.5rem 2rem;
+    .meta-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      justify-content: center;
     }
 
-    .dna-card h3 {
-      font-size: 1rem;
-      font-weight: 700;
-      margin-bottom: 1rem;
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      padding: 0.3rem 0.8rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: var(--text-muted);
     }
 
-    .dna-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 1rem;
+    .chip-accent {
+      background: rgba(14,184,208,0.12);
+      border-color: rgba(14,184,208,0.25);
+      color: var(--accent);
+    }
+
+    .dna-row {
+      display: flex;
+      gap: 2rem;
+      justify-content: center;
+      flex-wrap: wrap;
     }
 
     .dna-item {
-      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.2rem;
     }
 
     .dna-label {
-      font-size: 0.7rem;
+      font-size: 0.65rem;
       text-transform: uppercase;
-      letter-spacing: 0.1em;
+      letter-spacing: 0.12em;
       color: var(--text-subtle);
-      margin-bottom: 0.3rem;
     }
 
     .dna-value {
@@ -807,11 +1006,400 @@ function renderResultPage(session, chatId) {
       color: var(--accent);
     }
 
-    @media (max-width: 768px) {
-      .result {
-        grid-template-columns: 1fr;
-      }
+    /* ── Lyrics panel ─────────────────────────────────────────── */
+    .lyrics-section {
+      width: 100%;
+      border-top: 1px solid rgba(255,255,255,0.07);
+      padding-top: 2rem;
     }
+
+    .lyrics-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--text-subtle);
+      text-align: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .lyrics-scroll {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      padding-bottom: 4rem;
+    }
+
+    .lyric-line {
+      font-size: 1.2rem;
+      line-height: 2.2;
+      color: rgba(236,232,226,0.22);
+      text-align: center;
+      transition: color 0.35s ease, font-size 0.35s ease, font-weight 0.35s ease;
+      cursor: default;
+    }
+
+    .lyric-line.active {
+      color: var(--text);
+      font-size: 1.55rem;
+      font-weight: 700;
+      text-shadow: 0 0 28px rgba(14,184,208,0.35);
+    }
+
+    .lyric-line.near {
+      color: rgba(236,232,226,0.55);
+      font-size: 1.3rem;
+    }
+
+    /* ── Sticky player bar ────────────────────────────────────── */
+    .player-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 10;
+      background: rgba(12,14,17,0.88);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-top: 1px solid rgba(255,255,255,0.07);
+      padding: 0.875rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+    }
+
+    .player-art {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    .player-info {
+      flex-shrink: 0;
+      min-width: 0;
+      max-width: 180px;
+      overflow: hidden;
+    }
+
+    .player-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .player-genre {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .player-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.875rem;
+      flex-shrink: 0;
+    }
+
+    .play-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.15s ease, transform 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .play-btn:hover { opacity: 0.85; transform: scale(1.06); }
+
+    .play-btn svg { color: #0c0e11; }
+
+    .player-seek {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      min-width: 0;
+    }
+
+    .time-label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .progress-track {
+      flex: 1;
+      height: 4px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 2px;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.25s linear;
+      pointer-events: none;
+    }
+
+    .progress-thumb {
+      position: absolute;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--accent);
+      left: 0%;
+      opacity: 0;
+      transition: opacity 0.2s ease, left 0.25s linear;
+      pointer-events: none;
+    }
+
+    .progress-track:hover .progress-thumb { opacity: 1; }
+
+    .player-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-shrink: 0;
+    }
+
+    @media (max-width: 600px) {
+      .player-info { display: none; }
+      .player-actions { display: none; }
+      .track-title { font-size: 1.5rem; }
+      .album-cover { width: 160px; height: 160px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-blur" aria-hidden="true"></div>
+
+  <nav class="nav" style="position:relative;z-index:2;">
+    <a href="/" class="nav-brand">
+      <img src="/assets/echo_logo.jpg" alt="Echo" class="logo-img">
+      <span class="nav-brand-text gradient-text">ECHO</span>
+    </a>
+    <a href="/live" class="btn-secondary" style="font-size:0.85rem;padding:0.5rem 1rem;">+ New Track</a>
+  </nav>
+
+  <main class="page-content">
+    <h1 class="sr-only">${trackTitle}</h1>
+
+    <!-- Hero -->
+    <div class="hero-block">
+      <img src="${coverSrc}" alt="Album cover for ${trackTitle}" class="album-cover" loading="eager" width="220" height="220" />
+
+      <div class="track-title">${trackTitle}</div>
+
+      <div class="meta-chips">
+        ${goal ? `<span class="chip">🎯 ${goal}</span>` : ''}
+        ${genre ? `<span class="chip chip-accent">🎵 ${genre}</span>` : ''}
+      </div>
+
+      <div class="dna-row">
+        <div class="dna-item">
+          <span class="dna-label">BPM</span>
+          <span class="dna-value">${escapeHtml(String(dna.bpm || '—'))}</span>
+        </div>
+        <div class="dna-item">
+          <span class="dna-label">Mood</span>
+          <span class="dna-value" style="font-size:0.9rem;">${escapeHtml(String(dna.mood || '—'))}</span>
+        </div>
+        <div class="dna-item">
+          <span class="dna-label">Key</span>
+          <span class="dna-value">${escapeHtml(String(dna.key || '—'))}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lyrics -->
+    <section class="lyrics-section" aria-label="Lyrics">
+      <div class="lyrics-label">Lyrics</div>
+      <div class="lyrics-scroll" id="lyricsScroll">${lyricsHtml}</div>
+    </section>
+  </main>
+
+  <!-- Hidden audio element -->
+  ${hasAudio ? `<audio id="audioEl" preload="metadata">
+    <source src="${safeUrl(results.audio_url)}" type="${audioMime}">
+  </audio>` : ''}
+
+  <!-- Sticky Player Bar -->
+  <div class="player-bar" role="region" aria-label="Audio player">
+    <img src="${coverSrc}" alt="" class="player-art" aria-hidden="true">
+    <div class="player-info">
+      <div class="player-title">${trackTitle}</div>
+      <div class="player-genre">${genre || 'Echo Track'}</div>
+    </div>
+    <div class="player-controls">
+      ${hasAudio ? `
+      <button class="play-btn" id="playBtn" aria-label="Play">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <polygon id="iconPlay" points="5,3 19,12 5,21" />
+          <rect id="iconPause1" x="6" y="4" width="4" height="16" style="display:none"/>
+          <rect id="iconPause2" x="14" y="4" width="4" height="16" style="display:none"/>
+        </svg>
+      </button>
+      ` : `
+      <button class="play-btn" disabled aria-label="Audio unavailable" style="opacity:0.35;cursor:default;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+      </button>
+      `}
+    </div>
+    ${hasAudio ? `
+    <div class="player-seek">
+      <span class="time-label" id="timeCurrent">0:00</span>
+      <div class="progress-track" id="progressTrack" role="slider" aria-label="Seek" tabindex="0">
+        <div class="progress-fill" id="progressFill"></div>
+        <div class="progress-thumb" id="progressThumb"></div>
+      </div>
+      <span class="time-label" id="timeDuration">0:00</span>
+    </div>
+    ` : `
+    <div class="player-seek">
+      <span class="time-label" style="flex:1;text-align:center;opacity:0.4;">No audio generated</span>
+    </div>
+    `}
+    <div class="player-actions">
+      ${hasAudio ? `<a href="${safeUrl(results.audio_url)}" download="echo-track" class="btn-secondary" style="padding:0.45rem 0.9rem;font-size:0.8rem;">Download</a>` : ''}
+    </div>
+  </div>
+
+  ${hasAudio ? `
+  <script>
+    (function() {
+      const audio = document.getElementById('audioEl');
+      const playBtn = document.getElementById('playBtn');
+      const iconPlay = document.getElementById('iconPlay');
+      const iconPause1 = document.getElementById('iconPause1');
+      const iconPause2 = document.getElementById('iconPause2');
+      const progressFill = document.getElementById('progressFill');
+      const progressThumb = document.getElementById('progressThumb');
+      const progressTrack = document.getElementById('progressTrack');
+      const timeCurrent = document.getElementById('timeCurrent');
+      const timeDuration = document.getElementById('timeDuration');
+      const lines = document.querySelectorAll('.lyric-line');
+      let isPlaying = false;
+      let lastIdx = -1;
+
+      function fmt(s) {
+        const m = Math.floor(s / 60);
+        const sec = Math.floor(s % 60);
+        return m + ':' + String(sec).padStart(2, '0');
+      }
+
+      function setPlaying(v) {
+        isPlaying = v;
+        iconPlay.style.display = v ? 'none' : '';
+        iconPause1.style.display = v ? '' : 'none';
+        iconPause2.style.display = v ? '' : 'none';
+        playBtn.setAttribute('aria-label', v ? 'Pause' : 'Play');
+      }
+
+      audio.addEventListener('loadedmetadata', () => {
+        timeDuration.textContent = fmt(audio.duration);
+      });
+
+      audio.addEventListener('timeupdate', () => {
+        if (!audio.duration) return;
+        const pct = (audio.currentTime / audio.duration) * 100;
+        progressFill.style.width = pct + '%';
+        progressThumb.style.left = pct + '%';
+        timeCurrent.textContent = fmt(audio.currentTime);
+
+        if (lines.length === 0) return;
+        const idx = Math.min(
+          Math.floor((audio.currentTime / audio.duration) * lines.length),
+          lines.length - 1
+        );
+        if (idx === lastIdx) return;
+        lastIdx = idx;
+        lines.forEach((el, i) => {
+          el.classList.toggle('active', i === idx);
+          el.classList.toggle('near', i === idx - 1 || i === idx + 1);
+          el.classList.remove('past');
+        });
+        lines[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+
+      audio.addEventListener('ended', () => {
+        setPlaying(false);
+        lastIdx = -1;
+        lines.forEach(el => el.classList.remove('active', 'near', 'past'));
+        progressFill.style.width = '0%';
+        progressThumb.style.left = '0%';
+        timeCurrent.textContent = '0:00';
+      });
+
+      playBtn.addEventListener('click', () => {
+        if (isPlaying) { audio.pause(); setPlaying(false); }
+        else { audio.play(); setPlaying(true); }
+      });
+
+      // Seek on progress track click
+      progressTrack.addEventListener('click', (e) => {
+        if (!audio.duration) return;
+        const rect = progressTrack.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        audio.currentTime = pct * audio.duration;
+      });
+
+      // Keyboard seek
+      progressTrack.addEventListener('keydown', (e) => {
+        if (!audio.duration) return;
+        if (e.key === 'ArrowRight') audio.currentTime = Math.min(audio.duration, audio.currentTime + 5);
+        if (e.key === 'ArrowLeft') audio.currentTime = Math.max(0, audio.currentTime - 5);
+        if (e.key === ' ') { e.preventDefault(); playBtn.click(); }
+      });
+    })();
+  </script>
+  ` : ''}
+</body>
+</html>`;
+}
+
+// =============================================================
+// Pipeline Error Page — shown when generation_results.status === 'error'
+// =============================================================
+function renderPipelineErrorPage(chatId) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Generation Failed — Echo</title>
+  ${getFontLinks()}
+  <style>
+    ${getBaseStyles()}
+    .error-page {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: calc(100vh - 80px);
+      text-align: center;
+      padding: 2rem;
+      gap: 1.25rem;
+    }
+    .error-page h1 { font-size: 1.75rem; }
+    .error-page p { color: var(--text-muted); max-width: 400px; line-height: 1.6; }
   </style>
 </head>
 <body>
@@ -821,66 +1409,13 @@ function renderResultPage(session, chatId) {
       <span class="nav-brand-text gradient-text">ECHO</span>
     </a>
   </nav>
-
-  <main class="container">
-    <h1 class="sr-only">Your Generated Track</h1>
-    <div class="result">
-      <!-- Left: Album Art + Player -->
-      <div class="album-panel glass">
-        ${hasVideo ? `
-        <video autoplay loop muted playsinline class="album-cover"
-          poster="${safeUrl(results.image_url) || '/assets/echo_logo.jpg'}"
-          aria-label="Generated music video">
-          <source src="${safeUrl(results.video_url)}" type="video/mp4">
-        </video>
-        ` : `
-        <img src="${safeUrl(results.image_url) || '/assets/echo_logo.jpg'}" alt="Generated album cover" class="album-cover" loading="lazy" width="400" height="400" />
-        `}
-
-        ${hasAudio ? `
-        <audio controls preload="metadata" id="audioPlayer">
-          <source src="${safeUrl(results.audio_url)}" type="${results.audio_mime_type || (results.audio_url.match(/\.mp3(\?|$)/i) ? 'audio/mpeg' : 'audio/wav')}">
-          Your browser does not support the audio element.
-        </audio>
-
-        <div class="controls">
-          <button class="btn-primary" onclick="document.getElementById('audioPlayer').play()">Play</button>
-          <a href="${safeUrl(results.audio_url)}" download="echo-track" class="btn-secondary">Download</a>
-        </div>
-        ` : `
-        <div class="controls">
-          <button class="btn-secondary" disabled aria-disabled="true" style="flex: 1; justify-content: center; opacity: 0.5; cursor: default;">
-            Audio generating...
-          </button>
-        </div>
-        `}
-      </div>
-
-      <!-- Right: Lyrics + Musical DNA -->
-      <div class="info-panel">
-        <div class="lyrics-card glass">
-          <h2>Lyrics</h2>
-          <div class="lyrics-container">${lyricsHtml}</div>
-        </div>
-
-        <div class="dna-card glass">
-          <h3><span class="gradient-text">Musical DNA</span></h3>
-          <div class="dna-grid">
-            <div class="dna-item">
-              <div class="dna-label">BPM</div>
-              <div class="dna-value">${escapeHtml(String(dna.bpm || '—'))}</div>
-            </div>
-            <div class="dna-item">
-              <div class="dna-label">Mood</div>
-              <div class="dna-value" style="font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(String(dna.mood || '—'))}</div>
-            </div>
-            <div class="dna-item">
-              <div class="dna-label">Key</div>
-              <div class="dna-value">${escapeHtml(String(dna.key || '—'))}</div>
-            </div>
-          </div>
-        </div>
-      </div>
+  <main class="error-page">
+    <div style="font-size:3rem;">😔</div>
+    <h1>Generation Failed</h1>
+    <p>Something went wrong while mastering your track. This can happen if a source URL is unreachable or an AI model timed out.</p>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;justify-content:center;">
+      <a href="/demo" class="btn-primary">Try Again</a>
+      <a href="/" class="btn-secondary">← Home</a>
     </div>
   </main>
 </body>
@@ -1149,6 +1684,203 @@ app.get('/live', (req, res) => {
       .text-input-row { flex-wrap: wrap; }
       .text-input-row input { min-width: 0; }
     }
+
+    /* ── Music Settings Panel ── */
+    .settings-panel {
+      width: 100%;
+      max-width: 480px;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .settings-panel h3 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin: 0;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .settings-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .settings-row label {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    .scale-options {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .scale-options label {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.88rem;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .scale-options input[type="radio"] {
+      accent-color: var(--accent);
+    }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .slider-row input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent);
+      height: 4px;
+      cursor: pointer;
+    }
+
+    .slider-value {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      min-width: 2.5rem;
+      text-align: right;
+    }
+
+    .generate-buttons {
+      display: flex;
+      gap: 0.75rem;
+      width: 100%;
+      max-width: 480px;
+    }
+
+    .btn-echo {
+      flex: 1;
+      padding: 0.8rem 1rem;
+      background: linear-gradient(135deg, var(--accent), #7c3aed);
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+
+    .btn-echo:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+    .btn-echo:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    .btn-settings-gen {
+      flex: 1;
+      padding: 0.8rem 1rem;
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--accent-border);
+      border-radius: 12px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    .btn-settings-gen:hover:not(:disabled) { background: var(--surface-1); transform: translateY(-1px); }
+    .btn-settings-gen:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    /* ── Inline generation progress panel ── */
+    #progressPanel {
+      display: none;
+      width: 100%;
+      max-width: 680px;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    #progressPanel.visible { display: flex; }
+
+    .prog-header {
+      text-align: center;
+    }
+
+    .prog-header h2 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+    }
+
+    .prog-header p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .prog-bar-wrap {
+      background: var(--surface-2);
+      border-radius: 100px;
+      height: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    #liveProgressBar {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      border-radius: 100px;
+      transition: width 0.8s ease;
+      box-shadow: 0 0 8px rgba(14,184,208,0.5);
+    }
+
+    .prog-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .prog-step {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.7rem 1rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      font-size: 0.875rem;
+      transition: border-color 0.3s, background 0.3s;
+    }
+
+    .prog-step .step-icon { font-size: 1rem; flex-shrink: 0; }
+    .prog-step .step-label { flex: 1; color: var(--text-subtle); font-weight: 500; transition: color 0.3s; }
+    .prog-step .step-badge { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-subtle); }
+
+    .prog-step.active { border-color: var(--accent-border); background: var(--accent-dim); }
+    .prog-step.active .step-label { color: var(--accent); }
+    .prog-step.active .step-badge { color: var(--accent); }
+
+    .prog-step.done .step-label { color: var(--text-muted); }
+    .prog-step.done .step-badge { color: var(--text-subtle); }
+
+    .prog-spinner {
+      width: 14px; height: 14px;
+      border: 2px solid rgba(14,184,208,0.25);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: none;
+      flex-shrink: 0;
+    }
+    .prog-step.active .prog-spinner { display: block; }
+    .prog-step.done .prog-spinner { display: none; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -1193,13 +1925,51 @@ app.get('/live', (req, res) => {
       </div>
     </div>
 
+    <!-- Music Settings Panel -->
+    <div class="settings-panel" id="settingsPanel">
+      <h3>Music Settings</h3>
+      <div class="settings-row">
+        <label>Scale</label>
+        <div class="scale-options">
+          <label><input type="radio" name="scale" value="major" checked> Major (uplifting)</label>
+          <label><input type="radio" name="scale" value="minor"> Minor (emotional)</label>
+        </div>
+      </div>
+      <div class="settings-row">
+        <label>Density — sparse &harr; full</label>
+        <div class="slider-row">
+          <input type="range" id="densitySlider" min="0" max="1" step="0.05" value="0.6"
+            oninput="document.getElementById('densityVal').textContent = parseFloat(this.value).toFixed(2)">
+          <span class="slider-value" id="densityVal">0.60</span>
+        </div>
+      </div>
+      <div class="settings-row">
+        <label>Brightness — dark &harr; bright</label>
+        <div class="slider-row">
+          <input type="range" id="brightnessSlider" min="0" max="1" step="0.05" value="0.7"
+            oninput="document.getElementById('brightnessVal').textContent = parseFloat(this.value).toFixed(2)">
+          <span class="slider-value" id="brightnessVal">0.70</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Generate Buttons -->
+    <div class="generate-buttons" id="generateButtons">
+      <button class="btn-echo" id="btnStraightEcho" onclick="triggerStraightEcho()" disabled>
+        ✨ Straight Echoing!
+      </button>
+      <button class="btn-settings-gen" id="btnGenerateSettings" onclick="triggerWithSettings()" disabled>
+        Generate with Settings
+      </button>
+    </div>
+
     <!-- Transcript -->
     <div class="transcript-panel glass" id="transcript" role="log" aria-label="Conversation" aria-live="polite">
       <h3>Conversation</h3>
     </div>
 
     <!-- Text fallback + image upload -->
-    <div class="text-input-row">
+    <div class="text-input-row" id="textInputRow">
       <input type="text" id="textInput" autocomplete="off"
         placeholder="Type a message or paste a URL..."
         onkeydown="if(event.key==='Enter') sendText()"
@@ -1209,6 +1979,37 @@ app.get('/live', (req, res) => {
         aria-label="Share an image">📎</button>
       <input type="file" id="imageUploadInput" accept="image/*" onchange="sendImage(this)" aria-hidden="true">
       <button class="btn-primary" id="sendBtn" onclick="sendText()" style="padding: 0.75rem 1.25rem;">Send</button>
+    </div>
+
+    <!-- Inline generation progress (shown after trigger_generation) -->
+    <div id="progressPanel" aria-live="polite">
+      <div class="prog-header">
+        <h2><span class="gradient-text">Mastering Your Track...</span></h2>
+        <p id="progStatusMsg">Starting agents...</p>
+      </div>
+      <div class="prog-bar-wrap">
+        <div id="liveProgressBar"></div>
+      </div>
+      <div class="prog-steps">
+        <div class="prog-step" id="pstep-content_analyst">
+          <span class="step-icon">🔍</span>
+          <span class="step-label">Content Analyst — Reading your sources</span>
+          <div class="prog-spinner"></div>
+          <span class="step-badge">Pending</span>
+        </div>
+        <div class="prog-step" id="pstep-creative_director">
+          <span class="step-icon">✍️</span>
+          <span class="step-label">Creative Director — Writing lyrics & brief</span>
+          <div class="prog-spinner"></div>
+          <span class="step-badge">Pending</span>
+        </div>
+        <div class="prog-step" id="pstep-artist">
+          <span class="step-icon">🎨</span>
+          <span class="step-label">Artist — Generating cover & music</span>
+          <div class="prog-spinner"></div>
+          <span class="step-badge">Pending</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1289,10 +2090,7 @@ app.get('/live', (req, res) => {
           orb.setAttribute('aria-label', 'Start microphone');
           setStatus('connected', 'Ready — click the mic to start talking');
           document.getElementById('orbLabel').textContent = 'Click to start talking';
-          // Nudge Gemini to send its opening greeting
-          if (ws && ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: 'text', data: 'Hello' }));
-          }
+          enableGenerateButtons();
           break;
         }
 
@@ -1314,10 +2112,10 @@ app.get('/live', (req, res) => {
           break;
 
         case 'generation_started': {
-          addMessage('system', 'Creating your track — redirecting shortly...');
+          addMessage('system', '🎛️ Generation started — watch the progress below!');
           // Only follow same-origin relative paths to prevent open redirect
           const dest = typeof msg.digestUrl === 'string' && msg.digestUrl.startsWith('/') ? msg.digestUrl : null;
-          if (dest) setTimeout(() => { window.location.href = dest; }, 2500);
+          showProgressPanel(dest);
           break;
         }
 
@@ -1538,11 +2336,428 @@ app.get('/live', (req, res) => {
       return btoa(parts.join(''));
     }
 
+    // ── Inline generation progress ───────────────────────────────────
+    const STAGE_ORDER = ['content_analyst', 'creative_director', 'artist'];
+
+    function showProgressPanel(redirectDest) {
+      // Hide the conversation UI, show progress panel
+      document.getElementById('transcript').style.display = 'none';
+      document.getElementById('textInputRow').style.display = 'none';
+      document.getElementById('settingsPanel').style.display = 'none';
+      document.getElementById('generateButtons').style.display = 'none';
+      document.getElementById('progressPanel').classList.add('visible');
+
+      // Disable the mic orb
+      const orb = document.getElementById('voiceOrb');
+      orb.disabled = true;
+      orb.classList.add('disabled');
+      document.getElementById('orbLabel').textContent = 'Generating...';
+
+      // Connect to SSE for live pipeline updates
+      const sse = new EventSource('/api/pipeline-status/' + CHAT_ID);
+
+      sse.onmessage = (e) => {
+        let data;
+        try { data = JSON.parse(e.data); } catch { return; }
+
+        // Update progress bar and status message
+        const pct = data.progress || 0;
+        document.getElementById('liveProgressBar').style.width = pct + '%';
+        if (data.message) document.getElementById('progStatusMsg').textContent = data.message;
+
+        const stageIdx = STAGE_ORDER.indexOf(data.stage);
+        if (stageIdx >= 0) {
+          // Mark previous stages done
+          for (let i = 0; i < stageIdx; i++) {
+            const el = document.getElementById('pstep-' + STAGE_ORDER[i]);
+            if (el) {
+              el.classList.remove('active');
+              el.classList.add('done');
+              el.querySelector('.step-badge').textContent = 'Done ✓';
+            }
+          }
+          // Mark current stage active
+          const cur = document.getElementById('pstep-' + data.stage);
+          if (cur) {
+            cur.classList.remove('done');
+            cur.classList.add('active');
+            cur.querySelector('.step-badge').textContent = 'In progress';
+          }
+        }
+
+        if (data.stage === 'complete') {
+          sse.close();
+          STAGE_ORDER.forEach(s => {
+            const el = document.getElementById('pstep-' + s);
+            if (el) { el.classList.remove('active'); el.classList.add('done'); el.querySelector('.step-badge').textContent = 'Done ✓'; }
+          });
+          document.getElementById('progStatusMsg').textContent = '🎧 Your track is ready! Loading...';
+          if (redirectDest) setTimeout(() => { window.location.href = redirectDest; }, 1500);
+        }
+      };
+
+      sse.onerror = () => {
+        sse.close();
+        // SSE dropped — fall back to redirect if we have a dest
+        if (redirectDest) setTimeout(() => { window.location.href = redirectDest; }, 3000);
+      };
+    }
+
+    // ── Settings Panel helpers ────────────────────────────────────
+    function getSessionState() {
+      const goalEl = document.getElementById('stateGoal');
+      const genreEl = document.getElementById('stateGenre');
+      const linksEl = document.getElementById('stateLinks');
+      return {
+        goal: goalEl && goalEl.textContent !== '—' ? goalEl.textContent : null,
+        genre: genreEl && genreEl.textContent !== '—' ? genreEl.textContent : null,
+        linksCount: linksEl ? (parseInt(linksEl.textContent) || 0) : 0,
+      };
+    }
+
+    function isSessionReady() {
+      const { goal, genre, linksCount } = getSessionState();
+      return !!goal && !!genre && linksCount >= 1;
+    }
+
+    function getSelectedScale() {
+      const radio = document.querySelector('input[name="scale"]:checked');
+      return radio ? radio.value : 'major';
+    }
+
+    function triggerStraightEcho() {
+      if (!isSessionReady()) {
+        addMessage('system', '⚠️ Please share your goal, genre, and at least one link first via voice or text.');
+        return;
+      }
+      if (!ws || ws.readyState !== 1) return;
+      ws.send(JSON.stringify({ type: 'trigger_manual', useDefaults: true }));
+      disableGenerateButtons();
+    }
+
+    function triggerWithSettings() {
+      if (!isSessionReady()) {
+        addMessage('system', '⚠️ Please share your goal, genre, and at least one link first via voice or text.');
+        return;
+      }
+      if (!ws || ws.readyState !== 1) return;
+      const scalePreference = getSelectedScale();
+      const density = parseFloat(document.getElementById('densitySlider').value);
+      const brightness = parseFloat(document.getElementById('brightnessSlider').value);
+      ws.send(JSON.stringify({ type: 'trigger_manual', scalePreference, density, brightness }));
+      disableGenerateButtons();
+    }
+
+    function disableGenerateButtons() {
+      document.getElementById('btnStraightEcho').disabled = true;
+      document.getElementById('btnGenerateSettings').disabled = true;
+    }
+
+    function enableGenerateButtons() {
+      document.getElementById('btnStraightEcho').disabled = false;
+      document.getElementById('btnGenerateSettings').disabled = false;
+    }
+
     // ── Boot ───────────────────────────────────────────────────────
     connect();
   </script>
 </body>
 </html>`);
+});
+
+// =============================================================
+// PAGE: Demo Form — judges can generate without Telegram
+// =============================================================
+app.get('/demo', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Try Echo — Demo</title>
+  ${getFontLinks()}
+  <style>
+    ${getBaseStyles()}
+
+    .demo-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: calc(100vh - 80px);
+      padding: 3rem 1.5rem;
+    }
+
+    .demo-header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .demo-header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+    }
+
+    .demo-header p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      max-width: 460px;
+    }
+
+    .demo-form {
+      width: 100%;
+      max-width: 560px;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .field label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.95rem;
+      padding: 0.75rem 1rem;
+      transition: border-color 0.15s ease;
+      outline: none;
+      resize: vertical;
+    }
+
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus {
+      border-color: var(--accent-border);
+    }
+
+    .field textarea {
+      min-height: 120px;
+    }
+
+    .field .hint {
+      font-size: 0.75rem;
+      color: var(--text-subtle);
+    }
+
+    .submit-row {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      margin-top: 0.5rem;
+    }
+
+    #errorMsg {
+      color: #e05;
+      font-size: 0.85rem;
+      display: none;
+    }
+
+    .genre-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .genre-chip {
+      padding: 0.35rem 0.85rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+
+    .genre-chip:hover,
+    .genre-chip.selected {
+      background: var(--accent-dim);
+      border-color: var(--accent-border);
+      color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <a href="/" class="nav-brand">
+      <img src="/assets/echo_logo.jpg" alt="Echo" class="logo-img">
+      <span class="nav-brand-text gradient-text">ECHO</span>
+    </a>
+    <a href="/live" class="btn-secondary" style="font-size:0.85rem;padding:0.5rem 1rem;">Try Voice</a>
+  </nav>
+
+  <main class="demo-container">
+    <div class="demo-header">
+      <h1><span class="gradient-text">Try Echo</span></h1>
+      <p>Enter your learning goal, pick a genre, and paste some links. Echo will generate a personalized track in about 60 seconds.</p>
+    </div>
+
+    <form class="demo-form glass" style="padding: 2rem;" id="demoForm">
+      <div class="field">
+        <label for="goal">What are you learning?</label>
+        <input
+          type="text"
+          id="goal"
+          name="goal"
+          placeholder="e.g. Large language model architectures"
+          required
+          maxlength="200"
+        >
+      </div>
+
+      <div class="field">
+        <label>Music Genre</label>
+        <div class="genre-grid" id="genreGrid">
+          ${['Jazz', 'Lo-Fi', 'Hip-Hop', 'Electronic', 'Classical', 'Rock', 'Pop', 'Ambient'].map(g =>
+            `<button type="button" class="genre-chip" data-genre="${g}">${g}</button>`
+          ).join('')}
+        </div>
+        <input type="hidden" id="genre" name="genre" required>
+      </div>
+
+      <div class="field">
+        <label for="links">Source Links</label>
+        <textarea
+          id="links"
+          name="links"
+          placeholder="Paste URLs here, one per line&#10;https://example.com/article&#10;https://youtube.com/watch?v=..."
+          required
+        ></textarea>
+        <span class="hint">1–5 URLs supported. YouTube, articles, Twitter/X all work.</span>
+      </div>
+
+      <div class="submit-row">
+        <button type="submit" class="btn-primary" id="submitBtn">
+          Generate My Track
+        </button>
+        <span id="errorMsg"></span>
+      </div>
+    </form>
+  </main>
+
+  <script>
+    // Genre chip selection
+    const genreGrid = document.getElementById('genreGrid');
+    const genreInput = document.getElementById('genre');
+    let selectedGenre = '';
+
+    genreGrid.querySelectorAll('.genre-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        genreGrid.querySelectorAll('.genre-chip').forEach(c => c.classList.remove('selected'));
+        chip.classList.add('selected');
+        selectedGenre = chip.dataset.genre;
+        genreInput.value = selectedGenre;
+      });
+    });
+
+    // Form submission
+    document.getElementById('demoForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorMsg = document.getElementById('errorMsg');
+      errorMsg.style.display = 'none';
+
+      const goal = document.getElementById('goal').value.trim();
+      const genre = genreInput.value.trim();
+      const linksRaw = document.getElementById('links').value.trim();
+
+      if (!goal) { errorMsg.textContent = 'Please enter a learning goal.'; errorMsg.style.display = ''; return; }
+      if (!genre) { errorMsg.textContent = 'Please select a genre.'; errorMsg.style.display = ''; return; }
+      if (!linksRaw) { errorMsg.textContent = 'Please paste at least one URL.'; errorMsg.style.display = ''; return; }
+
+      const links = linksRaw.split(/\\n|\\r/).map(l => l.trim()).filter(l => l.startsWith('http'));
+      if (links.length === 0) { errorMsg.textContent = 'No valid URLs found. Make sure links start with http.'; errorMsg.style.display = ''; return; }
+
+      const submitBtn = document.getElementById('submitBtn');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Starting pipeline...';
+
+      try {
+        const resp = await fetch('/api/demo-generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ goal, genre, links }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.chatId) throw new Error(data.error || 'Unknown error');
+        window.location.href = '/digest/' + data.chatId;
+      } catch (err) {
+        errorMsg.textContent = 'Error: ' + err.message;
+        errorMsg.style.display = '';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Generate My Track';
+      }
+    });
+  </script>
+</body>
+</html>`);
+});
+
+// =============================================================
+// API: Demo generation — create session + trigger pipeline
+// =============================================================
+app.post('/api/demo-generate', async (req, res) => {
+  const { goal, genre, links } = req.body || {};
+
+  if (!goal || typeof goal !== 'string' || goal.trim().length === 0) {
+    return res.status(400).json({ error: 'goal is required' });
+  }
+  if (!genre || typeof genre !== 'string' || genre.trim().length === 0) {
+    return res.status(400).json({ error: 'genre is required' });
+  }
+  if (!Array.isArray(links) || links.length === 0) {
+    return res.status(400).json({ error: 'at least one link is required' });
+  }
+
+  const validLinks = links
+    .filter(l => typeof l === 'string')
+    .map(l => l.trim())
+    .filter(l => /^https?:\/\//i.test(l))
+    .slice(0, 5);
+
+  if (validLinks.length === 0) {
+    return res.status(400).json({ error: 'no valid http/https URLs provided' });
+  }
+
+  const chatId = 'demo_' + Date.now();
+
+  try {
+    await updateSession(chatId, {
+      chatId,
+      username: 'Demo User',
+      goal: goal.trim().slice(0, 200),
+      genre: genre.trim().slice(0, 50),
+      links: validLinks,
+      status: 'processing',
+    });
+
+    // Fire and forget — SSE will stream progress to the client
+    runGenerationPipeline(chatId, null).catch(err =>
+      console.error('[Demo] Pipeline error for', chatId, err)
+    );
+
+    return res.json({ chatId });
+  } catch (err) {
+    console.error('[Demo] Failed to start pipeline:', err);
+    return res.status(500).json({ error: 'Failed to start generation pipeline' });
+  }
 });
 
 // =============================================================

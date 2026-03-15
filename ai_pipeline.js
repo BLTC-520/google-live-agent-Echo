@@ -2,7 +2,7 @@
  * AI Generation Pipeline — thin orchestration layer.
  *
  * Delegates all work to the multi-agent system in agents/index.js:
- *   ContentAnalystAgent → CreativeDirectorAgent → ArtistAgent → VideographerAgent
+ *   ContentAnalystAgent → CreativeDirectorAgent → ArtistAgent
  *
  * This module handles:
  *   - Session state management (Firestore)
@@ -12,14 +12,14 @@
  * For SSE progress updates, consumers subscribe to pipelineEvents from agents/index.js.
  */
 const { getSession, updateSession } = require('./db');
-const { runAgentPipeline, pipelineEvents } = require('./agents/index');
+const { runAgentPipeline, pipelineEvents, pipelineState } = require('./agents/index');
 
 /**
  * Run the full generation pipeline for a chat session.
  * @param {string} chatId
  * @param {object|null} telegram  Telegraf telegram context (null for web-only sessions)
  */
-async function runGenerationPipeline(chatId, telegram) {
+async function runGenerationPipeline(chatId, telegram, musicSettings = {}) {
   try {
     console.log(`[Pipeline] ══════ Starting for chat ${chatId} ══════`);
 
@@ -32,7 +32,7 @@ async function runGenerationPipeline(chatId, telegram) {
     }
 
     // Run multi-agent pipeline
-    const results = await runAgentPipeline({ chatId, goal, genre, links });
+    const results = await runAgentPipeline({ chatId, goal, genre, links, musicSettings });
 
     // Persist results
     await updateSession(chatId, {
@@ -45,7 +45,7 @@ async function runGenerationPipeline(chatId, telegram) {
     // Notify via Telegram if available
     if (telegram) {
       const digestUrl = `${process.env.CLOUD_RUN_URL || 'http://localhost:8080'}/digest/${chatId}`;
-      const emoji = results.video_url ? '🎬' : results.audio_url ? '🎵' : '📝';
+      const emoji = results.audio_url ? '🎵' : '📝';
       await telegram.sendMessage(
         chatId,
         `${emoji} Your track "${results.track_title || 'Echo Track'}" is mastered! Listen here:\n${digestUrl}`
@@ -55,7 +55,7 @@ async function runGenerationPipeline(chatId, telegram) {
     console.error(`[Pipeline] FAILED for chat ${chatId}:`, err);
 
     try {
-      await updateSession(chatId, { status: 'idle' });
+      await updateSession(chatId, { status: 'error' });
     } catch (updateErr) {
       console.error('[Pipeline] Failed to reset status:', updateErr.message);
     }
@@ -73,4 +73,4 @@ async function runGenerationPipeline(chatId, telegram) {
   }
 }
 
-module.exports = { runGenerationPipeline, pipelineEvents };
+module.exports = { runGenerationPipeline, pipelineEvents, pipelineState };
