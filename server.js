@@ -254,15 +254,16 @@ app.get('/', (req, res) => {
   <main class="hero">
     <img src="/assets/echo_logo.jpg" alt="Echo — The Knowledge DJ" class="hero-logo">
     <h1><span class="gradient-text">The Knowledge DJ</span></h1>
-    <p>Turn the links you consume into personalized music tracks. Feed me articles, videos, and tweets — I'll remix them into your daily soundtrack.</p>
+    <p>Tell Echo what you're learning, share some links — and get a personalized AI-generated music track with album art, musical DNA, and AI-written verses. Powered by Gemini, Imagen 4, and Lyria.</p>
     <div style="display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;">
       <a href="/live" class="btn-primary">
-        Talk to Echo Live
+        🎤 Talk to Echo (Voice)
       </a>
       <a href="/demo" class="btn-secondary">
-        Try Demo Form
+        ⌨️ Try via Form
       </a>
     </div>
+    <p style="font-size:0.75rem;color:var(--text-subtle);margin-top:1rem;opacity:0.6;">No Telegram required &mdash; use voice or the web form</p>
   </main>
 
 </body>
@@ -1006,7 +1007,7 @@ function renderResultPage(session, chatId) {
       color: var(--accent);
     }
 
-    /* ── Lyrics panel ─────────────────────────────────────────── */
+    /* ── Learning Verses panel ────────────────────────────────── */
     .lyrics-section {
       width: 100%;
       border-top: 1px solid rgba(255,255,255,0.07);
@@ -1019,7 +1020,15 @@ function renderResultPage(session, chatId) {
       letter-spacing: 0.14em;
       color: var(--text-subtle);
       text-align: center;
-      margin-bottom: 1.5rem;
+      margin-bottom: 0.4rem;
+    }
+
+    .lyrics-sublabel {
+      font-size: 0.72rem;
+      color: var(--text-subtle);
+      opacity: 0.5;
+      text-align: center;
+      margin-bottom: 1.75rem;
     }
 
     .lyrics-scroll {
@@ -1034,20 +1043,18 @@ function renderResultPage(session, chatId) {
       line-height: 2.2;
       color: rgba(236,232,226,0.22);
       text-align: center;
-      transition: color 0.35s ease, font-size 0.35s ease, font-weight 0.35s ease;
+      transition: color 0.5s ease, font-weight 0.3s ease;
       cursor: default;
     }
 
     .lyric-line.active {
       color: var(--text);
-      font-size: 1.55rem;
-      font-weight: 700;
-      text-shadow: 0 0 28px rgba(14,184,208,0.35);
+      font-weight: 600;
+      text-shadow: 0 0 28px rgba(14,184,208,0.3);
     }
 
     .lyric-line.near {
-      color: rgba(236,232,226,0.55);
-      font-size: 1.3rem;
+      color: rgba(236,232,226,0.5);
     }
 
     /* ── Sticky player bar ────────────────────────────────────── */
@@ -1227,11 +1234,22 @@ function renderResultPage(session, chatId) {
           <span class="dna-value">${escapeHtml(String(dna.key || '—'))}</span>
         </div>
       </div>
+
+      <!-- AI pipeline attribution — judges love this -->
+      <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;justify-content:center;margin-top:0.5rem;">
+        <span style="font-size:0.72rem;color:var(--text-subtle);opacity:0.55;">Made with</span>
+        <span style="font-size:0.72rem;padding:0.2rem 0.6rem;border-radius:999px;background:rgba(14,184,208,0.08);border:1px solid rgba(14,184,208,0.15);color:var(--accent);opacity:0.8;">Gemini 2.5 Pro</span>
+        <span style="font-size:0.72rem;color:var(--text-subtle);opacity:0.35;">+</span>
+        <span style="font-size:0.72rem;padding:0.2rem 0.6rem;border-radius:999px;background:rgba(14,184,208,0.08);border:1px solid rgba(14,184,208,0.15);color:var(--accent);opacity:0.8;">Imagen 4</span>
+        <span style="font-size:0.72rem;color:var(--text-subtle);opacity:0.35;">+</span>
+        <span style="font-size:0.72rem;padding:0.2rem 0.6rem;border-radius:999px;background:rgba(14,184,208,0.08);border:1px solid rgba(14,184,208,0.15);color:var(--accent);opacity:0.8;">Lyria</span>
+      </div>
     </div>
 
-    <!-- Lyrics -->
-    <section class="lyrics-section" aria-label="Lyrics">
-      <div class="lyrics-label">Lyrics</div>
+    <!-- Learning Verses -->
+    <section class="lyrics-section" aria-label="Learning Verses">
+      <div class="lyrics-label">Learning Verses</div>
+      <div class="lyrics-sublabel">Written by Gemini 2.5 Pro &middot; Read along while Lyria plays</div>
       <div class="lyrics-scroll" id="lyricsScroll">${lyricsHtml}</div>
     </section>
   </main>

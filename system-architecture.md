@@ -181,11 +181,10 @@ sessions/{chatId}
 ├── created_at: timestamp
 └── generation_results:
     ├── track_title: string    ← short catchy song name (3-5 words)
-    ├── lyrics: string
-    ├── image_url: string      ← GCS public URL
-    ├── audio_url: string      ← GCS public URL
+    ├── lyrics: string         ← AI-written learning verses (Gemini 2.5 Pro)
+    ├── image_url: string      ← GCS public URL (Imagen 4 album cover)
+    ├── audio_url: string      ← GCS public URL (Lyria WAV track)
     ├── audio_mime_type: string ← e.g. "audio/wav" or "audio/mpeg"
-    ├── video_url: string      ← GCS public URL (optional)
     ├── image_prompt: string
     └── musical_dna:
         ├── bpm: string
