@@ -1,85 +1,178 @@
-# Echo — Submission Description
-
-## What Echo Does
-
-Echo is a **multimodal Live Agent** that transforms what you're learning into a personalized music experience. Tell Echo your learning goal, share a few URLs — articles, YouTube videos, Twitter threads — and Echo turns them into a unique music track: an AI-generated instrumental, a Imagen 4 album cover, and AI-written verses that capture what the content was about.
-
-The core idea: your reading list shouldn't just sit in a tab. It should become something you can feel.
+# Echo — Hackathon Submission
 
 ---
 
-## Features & Functionality
+## 🔗 Try It Out
 
-### 1. Voice-First Input via Gemini Live API
-The primary interface is `/live` — a real-time voice session powered by Gemini 2.5 Flash Native Audio. Echo greets you by voice, asks for your learning goal, music genre, and URLs, then calls the `trigger_generation()` tool once it has all three. This is the **Live Agent** pattern at the core of the hackathon category: the conversation itself drives the agentic pipeline.
-
-### 2. Web Form (No Mic Required)
-`/demo` provides a fallback for judges or users without a microphone: a simple form with a learning goal text field, genre chip selector (Jazz, Lo-Fi, Hip-Hop, Electronic, etc.), and a URL textarea. Identical pipeline is triggered.
-
-### 3. 3-Agent ADK-Style Pipeline
-After the voice session collects inputs, Echo runs a DAG-structured multi-agent pipeline:
-
-- **Agent 1 — ContentAnalystAgent**: Scrapes the submitted URLs (YouTube transcripts, web articles, Twitter/X threads) and uses Gemini 2.5 Flash to extract key themes, insights, and emotional tone.
-- **Agent 2 — CreativeDirectorAgent**: Uses Gemini 2.5 Pro to write 16-line learning verses that distill the content, generate an album art direction prompt, and produce a full Musical DNA object (BPM, mood, key, scale, density, brightness).
-- **Agent 3 — ArtistAgent**: Runs Imagen 4 and Lyria RealTime in **parallel**. Imagen 4 generates the album cover from the art direction prompt. Lyria RealTime receives the Musical DNA parameters and genre prompt over a WebSocket (`BidiGenerateMusic`) and streams 60 seconds of PCM audio, which is assembled into a WAV file and uploaded to Cloud Storage.
-
-### 4. Real-Time SSE Progress
-The processing page connects via Server-Sent Events to `/api/pipeline-status/:chatId` and shows a live 3-step progress stepper as each agent completes. No polling — pure event-driven.
-
-### 5. Result Page
-The result page shows the Imagen 4 album cover (with a blurred version as the page background), the track title, Musical DNA (BPM / Mood / Key), a sticky audio player with seek bar, and the AI-written learning verses that can be read while listening to the Lyria instrumental. A download button lets users save the audio file.
-
----
-
-## Technologies Used
-
-| Technology | How Echo uses it |
+| | Link |
 |---|---|
-| **Gemini Live API** (`gemini-2.5-flash-native-audio-preview`) | Voice onboarding — real-time bidirectional audio + function calling to trigger the pipeline |
-| **Gemini 2.5 Flash** | Content analysis — scrape summarization and theme extraction |
-| **Gemini 2.5 Pro** | Creative writing — learning verses, Musical DNA, image prompt |
-| **Imagen 4** (`imagen-4.0-generate-001`, Vertex AI) | Album cover generation |
-| **Lyria RealTime** (`lyria-realtime-exp`, AI Studio) | 60-second instrumental music generation via WebSocket |
-| **Cloud Firestore** | Session persistence — goal, genre, links, status, results |
-| **Cloud Storage** | Hosts generated audio (WAV) and album art (PNG) with public URLs |
-| **Cloud Run** | Serverless deployment via `deploy.sh` (one-command, `--source .`) |
-| **Node.js / Express** | HTTP server, WebSocket proxy, SSE endpoint, server-rendered HTML |
-| **Telegraf** | Optional Telegram bot interface (backup to voice + web form) |
+| **Live App** | https://echo-535359416008.us-central1.run.app |
+| **Voice Interface** | https://echo-535359416008.us-central1.run.app/live |
+| **Web Form (no mic)** | https://echo-535359416008.us-central1.run.app/demo |
+| **GitHub Repo** | *(your public repo URL)* |
 
 ---
 
-## Data Sources
+## 🏗️ About the Project
 
-- **User-submitted URLs**: Any public webpage, YouTube video (transcript via `youtube-transcript`), or Twitter/X thread
-- **Gemini 2.5 Pro**: Source of all creative text (verses, musical direction) — no external lyric databases
-- **Lyria**: Music is generated from scratch per track — no audio samples or licensed content
-- **Imagen 4**: Album art generated from scratch — no stock images
+### What Inspired Echo
 
----
+I spend a lot of time reading — articles, research papers, YouTube deep-dives, Twitter threads. And I've always felt there's a disconnect between *consuming* information and *internalizing* it. You read something brilliant, close the tab, and two days later it's gone.
 
-## Findings & Learnings
+Music is different. A song you heard once in 2015 can trigger an entire emotional memory. The rhythm makes it stick.
 
-### Lyria RealTime WebSocket Protocol
-The `BidiGenerateMusic` WebSocket protocol required reverse-engineering from the API spec. Key discoveries:
-- The `setup` message **must include the `model` field** or the connection is rejected
-- Prompts must be sent as `{ clientContent: { weightedPrompts: [...] } }` — not raw text
-- Music config (`bpm`, `scale`, `density`, `brightness`) is sent as a separate `{ musicGenerationConfig: {...} }` message
-- Audio arrives as base64-encoded PCM chunks in `serverContent.audioChunks[].data`
-- Lyria generates **instrumental music** — the Musical DNA parameters (BPM, scale, mood) are the primary creative levers, not the text prompt itself. We adapted the product framing accordingly: Gemini 2.5 Pro writes the learning verses as a "reading companion" to the instrumental, not as lyrics to be sung.
+So the question that started Echo was: **what if the content you consumed became a song about what you learned?**
 
-### Gemini Live Tool Calling
-The voice session uses Gemini's function calling to detect when the conversation has collected all required inputs (goal + genre + links). This is more robust than keyword detection and naturally handles multi-turn conversations where users give partial information.
+Not a random song. A personalized one — with a genre that matches your mood, an AI-generated album cover that reflects the content's themes, and verses written specifically from *your* learning goals. Something that encodes your knowledge into a format your brain actually remembers.
 
-### SSE + Fire-and-Forget Pipeline
-Running the agent pipeline as a background async task while the browser connects via SSE was the right architecture. It cleanly separates the HTTP response (immediate) from the generation work (60–90 seconds), and late-joining clients replay the last known state from the in-memory `pipelineState` map.
-
-### WAV Construction from PCM
-Lyria streams raw 48kHz stereo 16-bit PCM. Building the WAV header manually (44-byte RIFF header) and concatenating chunks on the server side gave us full control over format and avoided client-side audio decoding complexity.
+That's Echo: **The Knowledge DJ**.
 
 ---
 
-## What's Next
+### How I Built It
 
-- **Live Lyria steering via voice**: Keep the Lyria WebSocket open during the Gemini Live session and relay voice commands ("make it more upbeat") as `setWeights` calls for real-time music steering — the definitive "Live Agent" demo
-- **Track length control**: User-selectable 30s / 60s / 90s via the voice session or demo form
-- **Share links**: Generate a permanent public URL for each result page
+#### The Architecture
+
+Echo is structured as a **3-agent DAG pipeline** inspired by Google's Agent Development Kit (ADK) patterns. Each agent is independently isolated and communicates through structured outputs:
+
+```
+Voice / Web Form
+      │
+      ▼
+Gemini Live API  ──── real-time bidirectional audio
+  ↳ trigger_generation() tool call
+      │
+      ▼
+Agent 1: ContentAnalystAgent
+  └─ Scrapes URLs → Gemini 2.5 Flash → key themes + insights
+      │
+      ▼
+Agent 2: CreativeDirectorAgent
+  └─ Gemini 2.5 Pro → 16-line learning verses + Musical DNA
+      │
+     ┌┴────────────────┐
+     ▼                 ▼
+Agent 3a: Imagen 4    Agent 3b: Lyria RealTime
+  └─ Album cover        └─ 60s instrumental track
+     (parallel)           (BidiGenerateMusic WebSocket)
+      └──────────────────┘
+              │
+              ▼
+      Cloud Storage → Result Page (SSE progress)
+```
+
+The voice interface uses **Gemini Live** (`gemini-2.5-flash-native-audio-preview`) — a real-time bidirectional audio stream. Echo carries a natural voice conversation to collect three things: learning goal, music genre, and URLs. When it has all three, it calls a `trigger_generation()` function tool, which fires the pipeline. This is the core **Live Agent** pattern: the conversation *is* the agent, and the tool call is the handoff.
+
+#### The Musical DNA System
+
+The Creative Director agent outputs a structured "Musical DNA" object that drives Lyria:
+
+$$\text{Musical DNA} = \{bpm, \; mood, \; key, \; density \in [0,1], \; brightness \in [0,1]\}$$
+
+Lyria is steered with these precise parameters — not just a genre label. A jazz track about neural networks might get $bpm = 92$, $key = \text{"A Minor"}$, $density = 0.6$, $brightness = 0.4$ — fundamentally different from a lo-fi track about the same topic.
+
+#### The WAV Pipeline
+
+Lyria streams raw PCM over a WebSocket. Building the WAV manually gave full control:
+
+- Sample rate: $48{,}000$ Hz
+- Channels: 2 (stereo)
+- Bit depth: 16-bit signed PCM
+- Target: $48000 \times 2 \times 2 \times 60 = 11{,}520{,}000$ bytes (~11 MB for 60 seconds)
+
+Chunks accumulate until the byte threshold is hit, then a 44-byte RIFF header is prepended and the buffer is uploaded to Cloud Storage.
+
+---
+
+### Challenges I Faced
+
+#### 1. Lyria's Undocumented WebSocket Protocol
+
+This was the hardest technical challenge. Lyria RealTime (`lyria-realtime-exp`) is experimental and the documentation is sparse. Through trial and error I discovered:
+
+- The `setup` message **must include the `model` field** — omitting it causes a silent connection rejection
+- Prompts aren't sent as plain text — they go inside `{ clientContent: { weightedPrompts: [{ text, weight }] } }`
+- Music configuration is a separate message: `{ musicGenerationConfig: { bpm, scale, density, brightness } }`
+- Audio arrives as base64-encoded PCM in `serverContent.audioChunks[].data`
+- Lyria generates **instrumental music only** — it doesn't sing text. This required a significant product pivot: instead of "AI karaoke", Echo frames the AI-written verses as *learning companions* to read while listening.
+
+#### 2. Gemini Live Timing & Tool Call Reliability
+
+The voice session needed to avoid calling `trigger_generation()` prematurely — if Gemini started the pipeline before the user gave all three inputs, the generation would fail silently. The solution was a strict system prompt with explicit step gates (`STEP 1 → 2 → 3 → 4 → 5`) and a rule that the tool can only be called *after* a user confirmation. This made the conversation reliably collect all three required inputs before firing.
+
+#### 3. SSE + Long-Running Background Tasks
+
+Generation takes 60–90 seconds. The browser needs to show real-time progress without polling. The solution: fire the pipeline as a background async task (fire-and-forget), use an in-memory `EventEmitter` as a pub/sub bus, and stream events to the browser via Server-Sent Events. Late-joining clients (e.g., page refresh during generation) replay the last known state from a `pipelineState` Map.
+
+#### 4. WebSocket Audio Buffering (Gemini Live ↔ Browser)
+
+Gemini Live sends audio back as base64-encoded 24kHz PCM. The browser needs to play it in real time via the Web Audio API. The challenge was handling variable-size chunks, resampling from 24kHz to the browser's AudioContext sample rate, and avoiding dropouts. The AudioWorklet approach with a ring buffer resolved the latency and dropout issues.
+
+---
+
+### What I Learned
+
+**Lyria's true interface is Musical DNA, not text.** The genre prompt matters less than the precise BPM, scale, density, and brightness values. This shifted how the Creative Director agent works — its most important output isn't the verses, it's the musical parameters.
+
+**Gemini Live's tool calling is surprisingly robust.** The model naturally handles multi-turn conversations where users give partial information ("just jazz" → "what about jazz hip-hop?") and still correctly extracts structured data before calling the tool.
+
+**SSE is underused for long AI tasks.** Compared to WebSockets, SSE is trivially simple to implement and perfectly suited for one-way progress streaming. The `EventEmitter` + SSE pattern is now something I'll reach for any time I have a background job that needs UI progress.
+
+**Product framing matters as much as the tech.** The biggest lesson wasn't technical — it was learning that "AI writes song lyrics + instrumental music" is confusing when the music is instrumental. Reframing as "learning verses + musical companion" made the product story coherent and honest.
+
+---
+
+## 🛠️ Built With
+
+**Languages & Runtime**
+- JavaScript (Node.js ≥ 20)
+- HTML / CSS (server-rendered)
+
+**Frameworks & Libraries**
+- Express.js — HTTP server, SSE, web pages
+- `ws` — WebSocket client (Gemini Live + Lyria)
+- `@google/genai` — Gemini + Imagen 4 SDK
+- `google-auth-library` — ADC for Vertex AI
+- `@google-cloud/firestore` — session persistence
+- `@google-cloud/storage` — media hosting
+- `telegraf` — Telegram bot (optional interface)
+- `cheerio`, `axios` — web scraping
+- `youtube-transcript` — YouTube transcript extraction
+
+**Google Cloud Services & APIs**
+- Gemini Live API (`gemini-2.5-flash-native-audio-preview`) — voice + tool calling
+- Gemini 2.5 Pro / Flash — text generation (content analysis + creative writing)
+- Imagen 4 (`imagen-4.0-generate-001`, Vertex AI) — album cover generation
+- Lyria RealTime (`lyria-realtime-exp`, AI Studio) — music generation
+- Cloud Firestore — session state database
+- Cloud Storage — generated media (audio WAV + album cover PNG)
+- Cloud Run — serverless deployment (automated via `deploy.sh`)
+- Cloud Build — container builds (triggered by `gcloud run deploy --source .`)
+
+**Infrastructure**
+- Docker (Dockerfile for Cloud Run)
+- `deploy.sh` — one-command automated Cloud Run deployment (IaC)
+
+---
+
+## ☁️ Proof of Google Cloud Deployment
+
+- **Automated deployment script**: [`deploy.sh`](./deploy.sh) — uses `gcloud run deploy --source .` for one-command Cloud Build + Cloud Run deployment
+- **Vertex AI (Imagen 4) API calls**: [`agents/artist.js`](./agents/artist.js#L50) — direct Vertex AI Imagen 4 calls
+- **Lyria RealTime API calls**: [`agents/artist.js`](./agents/artist.js#L129) — BidiGenerateMusic WebSocket to AI Studio
+- **Cloud Firestore reads/writes**: [`db.js`](./db.js)
+- **Cloud Storage uploads**: [`agents/artist.js`](./agents/artist.js#L29)
+
+---
+
+## 📐 Architecture Diagram
+
+See [`system-architecture.md`](./system-architecture.md) for the full Mermaid architecture diagram, sequence diagram, and pipeline flowchart.
+
+---
+
+## 🔄 What's Next
+
+- **Live Lyria steering via voice** — keep the Lyria WebSocket open during the Gemini Live session and relay voice commands as real-time `setWeights` calls. Say "make it more upbeat" and the music shifts mid-generation. This is the definitive "Live Agent" demo.
+- **Track length control** — 30s / 60s / 90s selectable via voice or form
+- **Shareable result links** — permanent public URLs for every generated track
