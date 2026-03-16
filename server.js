@@ -2351,7 +2351,7 @@ app.get('/live', (req, res) => {
       addMessage('user', text);
 
       // Count URLs the user pastes — Echo never echoes them back so we must count here
-      const urlMatches = text.match(/https?:\/\/[^\s]+/g);
+      const urlMatches = text.match(/https?:\\/\\/[^\\s]+/g);
       if (urlMatches) {
         const el = document.getElementById('stateLinks');
         const cur = parseInt(el.textContent) || 0;
