@@ -4,7 +4,7 @@
  */
 const express = require('express');
 const path = require('path');
-const { getSession, updateSession } = require('./db');
+const { getSession, updateSession, listSessions } = require('./db');
 const { bot } = require('./bot');
 const { pipelineEvents, pipelineState, runGenerationPipeline } = require('./ai_pipeline');
 
@@ -164,6 +164,24 @@ function getBaseStyles() {
       color: var(--text);
     }
 
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .nav-link {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      padding: 0.4rem 0.75rem;
+      border-radius: 8px;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .nav-link:hover { color: var(--text); background: var(--surface-2); }
+    .nav-link.active { color: var(--accent); }
+
     .sr-only {
       position: absolute; width: 1px; height: 1px;
       padding: 0; margin: -1px; overflow: hidden;
@@ -246,13 +264,16 @@ app.get('/', (req, res) => {
 <body>
   <nav class="nav">
     <a href="/" class="nav-brand">
-      <img src="/assets/echo_logo.jpg" alt="Echo" class="logo-img">
+      <img src="/assets/logo.png" alt="Echo" class="logo-img">
       <span class="nav-brand-text gradient-text">ECHO</span>
     </a>
+    <div class="nav-links">
+      <a href="/library" class="nav-link">Library</a>
+    </div>
   </nav>
 
   <main class="hero">
-    <img src="/assets/echo_logo.jpg" alt="Echo — The Knowledge DJ" class="hero-logo">
+    <img src="/assets/logo.png" alt="Echo — The Knowledge DJ" class="hero-logo">
     <h1><span class="gradient-text">The Knowledge DJ</span></h1>
     <p>Tell Echo what you're learning, share some links — and get a personalized AI-generated music track with album art, musical DNA, and AI-written verses. Powered by Gemini, Imagen 4, and Lyria.</p>
     <div style="display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;">
@@ -407,9 +428,12 @@ function renderDashboardPage(session, chatId) {
 <body>
   <nav class="nav">
     <a href="/" class="nav-brand">
-      <img src="/assets/echo_logo.jpg" alt="Echo" class="logo-img">
+      <img src="/assets/logo.png" alt="Echo" class="logo-img">
       <span class="nav-brand-text gradient-text">ECHO</span>
     </a>
+    <div class="nav-links">
+      <a href="/library" class="nav-link">Library</a>
+    </div>
   </nav>
 
   <main class="container">
@@ -761,9 +785,12 @@ function renderProcessingPage(session, chatId) {
 <body>
   <nav class="nav">
     <a href="/" class="nav-brand">
-      <img src="/assets/echo_logo.jpg" alt="Echo" class="logo-img">
+      <img src="/assets/logo.png" alt="Echo" class="logo-img">
       <span class="nav-brand-text gradient-text">ECHO</span>
     </a>
+    <div class="nav-links">
+      <a href="/library" class="nav-link">Library</a>
+    </div>
   </nav>
 
   <main class="processing">
@@ -864,7 +891,7 @@ function renderResultPage(session, chatId) {
   const trackTitle = escapeHtml(results.track_title || 'Echo Track');
   const goal = escapeHtml(session.goal || '');
   const genre = escapeHtml(session.genre || '');
-  const coverSrc = safeUrl(results.image_url) || '/assets/echo_logo.jpg';
+  const coverSrc = safeUrl(results.image_url) || '/assets/logo.png';
   const audioMime = results.audio_mime_type || (results.audio_url && results.audio_url.match(/\.mp3(\?|$)/i) ? 'audio/mpeg' : 'audio/wav');
 
   // Process lyrics: split by newlines for display
@@ -1200,10 +1227,13 @@ function renderResultPage(session, chatId) {
 
   <nav class="nav" style="position:relative;z-index:2;">
     <a href="/" class="nav-brand">
-      <img src="/assets/echo_logo.jpg" alt="Echo" class="logo-img">
+      <img src="/assets/logo.png" alt="Echo" class="logo-img">
       <span class="nav-brand-text gradient-text">ECHO</span>
     </a>
-    <a href="/live" class="btn-secondary" style="font-size:0.85rem;padding:0.5rem 1rem;">+ New Track</a>
+    <div class="nav-links">
+      <a href="/library" class="nav-link">Library</a>
+      <a href="/live" class="btn-secondary" style="font-size:0.85rem;padding:0.5rem 1rem;">+ New Track</a>
+    </div>
   </nav>
 
   <main class="page-content">
@@ -1423,9 +1453,12 @@ function renderPipelineErrorPage(chatId) {
 <body>
   <nav class="nav">
     <a href="/" class="nav-brand">
-      <img src="/assets/echo_logo.jpg" alt="Echo" class="logo-img">
+      <img src="/assets/logo.png" alt="Echo" class="logo-img">
       <span class="nav-brand-text gradient-text">ECHO</span>
     </a>
+    <div class="nav-links">
+      <a href="/library" class="nav-link">Library</a>
+    </div>
   </nav>
   <main class="error-page">
     <div style="font-size:3rem;">😔</div>
@@ -1469,9 +1502,12 @@ function renderErrorPage() {
 <body>
   <nav class="nav">
     <a href="/" class="nav-brand">
-      <img src="/assets/echo_logo.jpg" alt="Echo" class="logo-img">
+      <img src="/assets/logo.png" alt="Echo" class="logo-img">
       <span class="nav-brand-text gradient-text">ECHO</span>
     </a>
+    <div class="nav-links">
+      <a href="/library" class="nav-link">Library</a>
+    </div>
   </nav>
   <main class="error-page">
     <h1>😔 Something went wrong</h1>
@@ -1904,7 +1940,7 @@ app.get('/live', (req, res) => {
 <body>
   <nav class="nav">
     <a href="/" class="nav-brand">
-      <img src="/assets/echo_logo.jpg" alt="Echo" class="logo-img">
+      <img src="/assets/logo.png" alt="Echo" class="logo-img">
       <span class="nav-brand-text gradient-text">ECHO</span>
     </a>
     <span style="font-size: 0.8rem; color: var(--text-subtle);">Live Session</span>
@@ -2616,10 +2652,13 @@ app.get('/demo', (req, res) => {
 <body>
   <nav class="nav">
     <a href="/" class="nav-brand">
-      <img src="/assets/echo_logo.jpg" alt="Echo" class="logo-img">
+      <img src="/assets/logo.png" alt="Echo" class="logo-img">
       <span class="nav-brand-text gradient-text">ECHO</span>
     </a>
-    <a href="/live" class="btn-secondary" style="font-size:0.85rem;padding:0.5rem 1rem;">Try Voice</a>
+    <div class="nav-links">
+      <a href="/library" class="nav-link">Library</a>
+      <a href="/live" class="btn-secondary" style="font-size:0.85rem;padding:0.5rem 1rem;">Try Voice</a>
+    </div>
   </nav>
 
   <main class="demo-container">
@@ -2764,6 +2803,7 @@ app.post('/api/demo-generate', async (req, res) => {
       genre: genre.trim().slice(0, 50),
       links: validLinks,
       status: 'processing',
+      createdAt: new Date().toISOString(),
     });
 
     // Fire and forget — SSE will stream progress to the client
@@ -2775,6 +2815,206 @@ app.post('/api/demo-generate', async (req, res) => {
   } catch (err) {
     console.error('[Demo] Failed to start pipeline:', err);
     return res.status(500).json({ error: 'Failed to start generation pipeline' });
+  }
+});
+
+// =============================================================
+// PAGE: Library — browse all past generated tracks
+// =============================================================
+app.get('/library', async (req, res) => {
+  try {
+    const sessions = await listSessions(50);
+
+    const cardsHtml = sessions.length === 0
+      ? `<div class="empty-state">
+           <p style="font-size:2rem;margin-bottom:1rem;">🎵</p>
+           <p>No tracks yet. Generate your first one!</p>
+           <a href="/live" class="btn-primary" style="margin-top:1.5rem;">Start Creating</a>
+         </div>`
+      : sessions.map(s => {
+          const r = s.generation_results || {};
+          const dna = r.musical_dna || {};
+          const cover = safeUrl(r.image_url) || '/assets/logo.png';
+          const title = escapeHtml(r.track_title || s.goal || 'Untitled Track');
+          const goal = escapeHtml(s.goal || '');
+          const date = s.createdAt
+            ? new Date(s.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+            : '';
+          const bpm = escapeHtml(dna.bpm || '');
+          const mood = escapeHtml(dna.mood || '');
+          const key = escapeHtml(dna.key || '');
+          return `
+            <a href="/digest/${escapeHtml(s.id)}" class="track-card glass">
+              <div class="track-cover">
+                <img src="${cover}" alt="${title}" loading="lazy" onerror="this.src='/assets/logo.png'">
+                <div class="play-overlay">▶</div>
+              </div>
+              <div class="track-info">
+                <h3 class="track-title">${title}</h3>
+                ${goal ? `<p class="track-goal">${goal}</p>` : ''}
+                <div class="track-tags">
+                  ${bpm ? `<span class="dna-tag">${bpm} BPM</span>` : ''}
+                  ${mood ? `<span class="dna-tag">${mood}</span>` : ''}
+                  ${key ? `<span class="dna-tag">${key}</span>` : ''}
+                </div>
+                ${date ? `<p class="track-date">${date}</p>` : ''}
+              </div>
+            </a>`;
+        }).join('');
+
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Library — Echo</title>
+  ${getFontLinks()}
+  <style>
+    ${getBaseStyles()}
+
+    .library-header {
+      padding: 3rem 0 2rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 2.5rem;
+    }
+
+    .library-header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+    }
+
+    .library-header p {
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+    }
+
+    .tracks-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .track-card {
+      display: block;
+      text-decoration: none;
+      color: inherit;
+      border-radius: 14px;
+      overflow: hidden;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .track-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+
+    .track-cover {
+      position: relative;
+      aspect-ratio: 1;
+      background: var(--surface-2);
+      overflow: hidden;
+    }
+
+    .track-cover img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .play-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      color: #fff;
+    }
+
+    .track-card:hover .play-overlay { opacity: 1; }
+
+    .track-info {
+      padding: 1rem;
+    }
+
+    .track-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 0.35rem;
+    }
+
+    .track-goal {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 0.5rem;
+    }
+
+    .track-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .dna-tag {
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent-border);
+      border-radius: 999px;
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .track-date {
+      font-size: 0.75rem;
+      color: var(--text-subtle);
+    }
+
+    .empty-state {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 5rem 2rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <a href="/" class="nav-brand">
+      <img src="/assets/logo.png" alt="Echo" class="logo-img">
+      <span class="nav-brand-text gradient-text">ECHO</span>
+    </a>
+    <div class="nav-links">
+      <a href="/library" class="nav-link active">Library</a>
+      <a href="/live" class="btn-secondary" style="font-size:0.85rem;padding:0.5rem 1rem;">+ New Track</a>
+    </div>
+  </nav>
+
+  <main class="container">
+    <div class="library-header">
+      <h1>Your <span class="gradient-text">Library</span></h1>
+      <p>${sessions.length} track${sessions.length !== 1 ? 's' : ''} generated</p>
+    </div>
+    <div class="tracks-grid">
+      ${cardsHtml}
+    </div>
+  </main>
+</body>
+</html>`);
+  } catch (err) {
+    console.error('[Library] Error:', err);
+    res.status(500).send(renderErrorPage());
   }
 });
 

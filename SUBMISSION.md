@@ -67,15 +67,17 @@ The voice interface uses **Gemini Live** (`gemini-2.5-flash-native-audio-preview
 
 The Creative Director agent outputs a structured "Musical DNA" object that drives Lyria:
 
-$$\text{Musical DNA} = \{bpm, \; mood, \; key, \; density \in [0,1], \; brightness \in [0,1]\}$$
+```
+Musical DNA = { bpm, mood, key, density ∈ [0,1], brightness ∈ [0,1] }
+```
 
-Lyria is steered with these precise parameters — not just a genre label. A jazz track about neural networks might get $bpm = 92$, $key = \text{"A Minor"}$, $density = 0.6$, $brightness = 0.4$ — fundamentally different from a lo-fi track about the same topic.
+Lyria is steered with these precise parameters — not just a genre label. A jazz track about neural networks might get `bpm=92`, `key="A Minor"`, `density=0.6`, `brightness=0.4` — fundamentally different from a lo-fi track about the same topic.
 
 #### The WAV Pipeline
 
 Lyria streams raw PCM over a WebSocket. Building the WAV manually gave full control:
 
-- Sample rate: $48{,}000$ Hz
+- Sample rate: 48,000 Hz
 - Channels: 2 (stereo)
 - Bit depth: 16-bit signed PCM
 - Target: $48000 \times 2 \times 2 \times 60 = 11{,}520{,}000$ bytes (~11 MB for 60 seconds)
@@ -176,3 +178,21 @@ See [`system-architecture.md`](./system-architecture.md) for the full Mermaid ar
 - **Live Lyria steering via voice** — keep the Lyria WebSocket open during the Gemini Live session and relay voice commands as real-time `setWeights` calls. Say "make it more upbeat" and the music shifts mid-generation. This is the definitive "Live Agent" demo.
 - **Track length control** — 30s / 60s / 90s selectable via voice or form
 - **Shareable result links** — permanent public URLs for every generated track
+
+### Future Roadmap
+
+#### Full MV Generation (Pending Lyria vocal support)
+Once Lyria supports lyrics + music together, Echo will generate complete **music videos** rendered with Vue 3 — not just audio, but a visual learning experience where knowledge becomes something you can watch. The AI-written verses, album art, and music would be composed into a synchronized MV.
+
+Current blocker: Lyria generates instrumental music only and doesn't support vocal tracks yet. Veo 3 was evaluated for video generation but integration was not completed in this MVP.
+
+#### Zero-Input Goal Detection
+Instead of asking users to type their learning goal, Echo would auto-detect it by connecting to the tools they already use:
+
+- **Notion API** → read notes, pages, and tasks
+- **GitHub API** → analyze repos, recent commits, and open issues
+- **Google APIs** → scrape calendar, docs, or other workspace context
+
+Echo would infer the user's learning goals from their existing data — eliminating manual input entirely and making onboarding frictionless.
+
+*Both features are scoped for post-MVP iterations. The current version establishes the core voice → analysis → music pipeline.*

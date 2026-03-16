@@ -71,10 +71,10 @@ async function generateAlbumCover(imagePrompt, chatId) {
     }
 
     console.warn('[ArtistAgent] Imagen 4 returned no images — using placeholder.');
-    return { url: '/assets/echo_logo.jpg', base64: null };
+    return { url: '/assets/logo.png', base64: null };
   } catch (err) {
     console.error('[ArtistAgent] Imagen 4 error:', err.message);
-    return { url: '/assets/echo_logo.jpg', base64: null };
+    return { url: '/assets/logo.png', base64: null };
   }
 }
 

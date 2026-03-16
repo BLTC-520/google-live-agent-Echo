@@ -19,6 +19,7 @@ const DEFAULT_SESSION = {
   links: [],
   status: 'idle',
   username: '',
+  createdAt: '',
   generation_results: {
     lyrics: '',
     image_url: '',
@@ -43,8 +44,9 @@ async function getSession(chatId) {
   }
 
   // Create new session with defaults
-  await docRef.set(DEFAULT_SESSION);
-  return { id: String(chatId), ...DEFAULT_SESSION };
+  const newSession = { ...DEFAULT_SESSION, createdAt: new Date().toISOString() };
+  await docRef.set(newSession);
+  return { id: String(chatId), ...newSession };
 }
 
 /**
@@ -70,4 +72,25 @@ async function appendLink(chatId, link) {
   );
 }
 
-module.exports = { getSession, updateSession, appendLink };
+/**
+ * List all completed sessions, newest first.
+ * @param {number} limit - Max sessions to return
+ * @returns {Promise<Object[]>} Array of session data
+ */
+async function listSessions(limit = 50) {
+  const snapshot = await db.collection(COLLECTION)
+    .where('status', '==', 'completed')
+    .limit(limit)
+    .get();
+
+  const sessions = [];
+  snapshot.forEach(doc => sessions.push({ id: doc.id, ...doc.data() }));
+
+  return sessions.sort((a, b) => {
+    const aTime = a.createdAt || a.id;
+    const bTime = b.createdAt || b.id;
+    return bTime > aTime ? 1 : -1;
+  });
+}
+
+module.exports = { getSession, updateSession, appendLink, listSessions };

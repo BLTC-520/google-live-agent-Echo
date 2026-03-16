@@ -37,45 +37,7 @@ Echo is a **multimodal Live Agent** built for the **Google Live Agent Challenge 
 
 ## Multi-Agent Architecture (ADK Pattern)
 
-```
-User Voice / Web Form
-        │
-        ▼
-┌─────────────────────────────────────────────┐
-│  Gemini Live API (gemini-2.5-flash-native)  │
-│  ↳ Real-time bidirectional voice (WebSocket) │
-│  ↳ Collects goal + genre + URLs via convo   │
-│  ↳ Calls trigger_generation() tool call     │
-└─────────────────────┬───────────────────────┘
-                      │
-                      ▼
-╔═════════════════════════════════════════════════╗
-║           Echo Multi-Agent Pipeline             ║
-║                                                 ║
-║  Agent 1: ContentAnalystAgent                   ║
-║    └─ Scrapes URLs (YouTube / web / Twitter)    ║
-║    └─ Extracts themes + insights (Gemini Flash) ║
-║                     │                           ║
-║  Agent 2: CreativeDirectorAgent                 ║
-║    └─ Writes 16-line learning verses            ║
-║    └─ Album art direction + Musical DNA         ║
-║    └─ Gemini 2.5 Pro (BPM, mood, key, scale)   ║
-║                     │                           ║
-║         ┌───────────┴───────────┐               ║
-║  Agent 3: ArtistAgent          │  (parallel)   ║
-║    └─ Imagen 4 → album cover   │               ║
-║    └─ Lyria → 60s instrumental │               ║
-║         └───────────┬──────────┘               ║
-║                                                 ║
-╚═════════════════════╦═══════════════════════════╝
-                      ║
-                      ▼
-         Google Cloud Storage (cover + audio)
-                      │
-                      ▼
-         Result Page ← SSE real-time progress
-           Album art · Lyria track · AI verses
-```
+![Echo System Architecture](./assets/system-architecture.png)
 
 ---
 
@@ -130,8 +92,7 @@ echo/
 ├── test/
 │   └── pipeline.test.js      # 30 unit tests (jest)
 ├── assets/
-│   ├── echo_logo.jpg
-│   └── Immutable_Code.mp3    # Fallback track if Lyria unavailable
+│   └── echo_logo.jpg
 ├── deploy.sh                 # One-command Cloud Run deployment
 ├── Dockerfile
 ├── .env.example
