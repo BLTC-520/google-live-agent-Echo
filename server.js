@@ -2401,7 +2401,8 @@ app.get('/live', (req, res) => {
       document.getElementById('generateButtons').style.display = 'none';
       document.getElementById('progressPanel').classList.add('visible');
 
-      // Disable the mic orb
+      // Stop mic capture and disable the orb
+      stopMic();
       const orb = document.getElementById('voiceOrb');
       orb.disabled = true;
       orb.classList.add('disabled');
