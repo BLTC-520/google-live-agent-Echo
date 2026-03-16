@@ -317,6 +317,9 @@ async function handleLiveSession(ws, chatId, baseUrl) {
 
     console.log(`[Live] Triggering generation for chat ${chatId}:`, { goal, genre, linksCount: links.length });
 
+    // Sync UI counters before generation starts (covers voice-collected links)
+    sendToClient({ type: 'session_update', goal, genre, linksCount: links.length });
+
     try {
       await updateSession(chatId, {
         goal, genre, links, status: 'processing',

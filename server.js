@@ -194,6 +194,15 @@ function getBaseStyles() {
         transition-duration: 0.01ms !important;
       }
     }
+
+    @media (max-width: 480px) {
+      .container { padding: 1rem; }
+      .nav { padding: 0.75rem 1rem; }
+      .btn-primary, .btn-secondary {
+        padding: 0.65rem 1.25rem;
+        font-size: 0.875rem;
+      }
+    }
   `;
 }
 
@@ -422,6 +431,12 @@ function renderDashboardPage(session, chatId) {
 
     @media (max-width: 768px) {
       .dashboard { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 480px) {
+      .dashboard { margin-top: 1rem; }
+      .links-panel { padding: 1.25rem; }
+      .profile-panel { padding: 1.25rem; }
     }
   </style>
 </head>
@@ -779,6 +794,14 @@ function renderProcessingPage(session, chatId) {
     @keyframes eqBounce {
       0%   { height: 4px; }
       100% { height: 28px; }
+    }
+
+    @media (max-width: 480px) {
+      .processing { padding: 2rem 1rem; }
+      .processing h1 { font-size: 1.4rem; }
+      .progress-wrap { padding: 0 0.5rem; }
+      .phases { padding: 0 0.25rem; }
+      .phase-step { padding: 0.625rem 0.75rem; gap: 0.625rem; }
     }
   </style>
 </head>
@@ -1219,6 +1242,10 @@ function renderResultPage(session, chatId) {
       .player-actions { display: none; }
       .track-title { font-size: 1.5rem; }
       .album-cover { width: 160px; height: 160px; }
+      .dna-row { gap: 1rem; }
+      .page-content { padding: 1.5rem 1rem 1.5rem; }
+      .player-bar { padding: 0.75rem 1rem; gap: 0.75rem; }
+      .lyric-line { font-size: 1rem; }
     }
   </style>
 </head>
@@ -1734,9 +1761,16 @@ app.get('/live', (req, res) => {
     }
 
     @media (max-width: 600px) {
-      .session-state { grid-template-columns: 1fr 1fr 1fr; }
+      .session-state { grid-template-columns: 1fr 1fr; }
       .text-input-row { flex-wrap: wrap; }
       .text-input-row input { min-width: 0; }
+      .generate-buttons { flex-direction: column; }
+      .live-hero h1 { font-size: 1.5rem; }
+      .settings-panel { padding: 1rem; }
+    }
+
+    @media (max-width: 400px) {
+      .session-state { grid-template-columns: 1fr; }
     }
 
     /* ── Music Settings Panel ── */
@@ -2173,6 +2207,16 @@ app.get('/live', (req, res) => {
           break;
         }
 
+        case 'session_update': {
+          // Authoritative state from server (e.g. voice-collected links)
+          if (msg.goal) document.getElementById('stateGoal').textContent = msg.goal.substring(0, 30);
+          if (msg.genre) document.getElementById('stateGenre').textContent = msg.genre.substring(0, 20);
+          if (typeof msg.linksCount === 'number') {
+            document.getElementById('stateLinks').textContent = msg.linksCount;
+          }
+          break;
+        }
+
         case 'error':
           addMessage('system', '⚠️ ' + msg.message);
           setStatus('connected', 'Error occurred');
@@ -2305,6 +2349,15 @@ app.get('/live', (req, res) => {
       btn.disabled = true;
       ws.send(JSON.stringify({ type: 'text', data: text }));
       addMessage('user', text);
+
+      // Count URLs the user pastes — Echo never echoes them back so we must count here
+      const urlMatches = text.match(/https?:\/\/[^\s]+/g);
+      if (urlMatches) {
+        const el = document.getElementById('stateLinks');
+        const cur = parseInt(el.textContent) || 0;
+        el.textContent = cur + urlMatches.length;
+      }
+
       input.value = '';
       setTimeout(() => { btn.disabled = false; }, 400);
     }
@@ -2616,6 +2669,14 @@ app.get('/demo', (req, res) => {
       gap: 1rem;
       align-items: center;
       margin-top: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 480px) {
+      .demo-container { padding: 2rem 1rem; }
+      .demo-header h1 { font-size: 1.5rem; }
+      .submit-row { flex-direction: column; align-items: stretch; }
+      .submit-row .btn-primary { width: 100%; justify-content: center; }
     }
 
     #errorMsg {
@@ -2987,6 +3048,12 @@ app.get('/library', async (req, res) => {
       text-align: center;
       padding: 5rem 2rem;
       color: var(--text-muted);
+    }
+
+    @media (max-width: 480px) {
+      .library-header { padding: 2rem 0 1.5rem; }
+      .library-header h1 { font-size: 1.5rem; }
+      .tracks-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.875rem; }
     }
   </style>
 </head>
