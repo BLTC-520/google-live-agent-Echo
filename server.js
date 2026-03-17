@@ -2410,26 +2410,6 @@ app.get('/live', (req, res) => {
       panel.appendChild(div);
       panel.scrollTop = panel.scrollHeight;
 
-      // Update state display from Echo messages
-      if (role === 'echo') extractStateFromText(text);
-    }
-
-    function extractStateFromText(text) {
-      // Simple heuristic to show collected data
-      const lower = text.toLowerCase();
-      if (lower.includes('goal') && lower.includes(':')) {
-        const match = text.match(/goal[^:]*:\s*["']?([^"'.!?]+)/i);
-        if (match) document.getElementById('stateGoal').textContent = match[1].trim().substring(0, 30);
-      }
-      if (lower.includes('genre') && lower.includes(':')) {
-        const match = text.match(/genre[^:]*:\s*["']?([^"'.!?]+)/i);
-        if (match) document.getElementById('stateGenre').textContent = match[1].trim().substring(0, 20);
-      }
-      const urlMatches = text.match(/https?:\\/\\/[^\\s]+/g);
-      if (urlMatches) {
-        const cur = parseInt(document.getElementById('stateLinks').textContent) || 0;
-        document.getElementById('stateLinks').textContent = cur + urlMatches.length;
-      }
     }
 
     function arrayBufferToBase64(buffer) {
